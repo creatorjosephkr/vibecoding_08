@@ -1018,7 +1018,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       resultCharacter.classList.remove('word-mode');
     }
 
-    resultCharacter.innerHTML = `<span>${result.text}</span>`;
+    resultCharacter.innerHTML = '';
+    const textSpan = document.createElement('span');
+    textSpan.style.whiteSpace = 'pre-wrap';
+    textSpan.textContent = result.text;
+    resultCharacter.appendChild(textSpan);
+
     resultCharacter.style.transform = 'scale(1.15)';
     setTimeout(() => {
       resultCharacter.style.transform = 'scale(1)';

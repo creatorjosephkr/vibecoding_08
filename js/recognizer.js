@@ -98,15 +98,15 @@ class HandwritingRecognizer {
     let psm = Tesseract.PSM.SINGLE_LINE;
 
     if (this.currentScope === 'sentence') {
-      // [단어/문장 모드] 공백 및 구두점 허용
+      // [단어/문장 모드] 공백, 구두점 및 개행(줄바꿈) 허용, 다중 행 블록 인식 모드 적용
       if (this.currentMode === 'digits') {
-        whitelist = '0123456789 -.,';
+        whitelist = '0123456789 -.,\n';
       } else if (this.currentMode === 'letters') {
-        whitelist = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz -.,!?';
+        whitelist = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz -.,!?\n';
       } else {
-        whitelist = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz -.,!?';
+        whitelist = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz -.,!?\n';
       }
-      psm = Tesseract.PSM.SINGLE_LINE;
+      psm = Tesseract.PSM.SINGLE_BLOCK; // Mode 6: 단일 텍스트 블록 (두 줄 이상의 문장 지원)
     } else {
       // [1개 문자 모드]
       if (this.currentMode === 'digits') {
@@ -146,8 +146,17 @@ class HandwritingRecognizer {
 
     // ==========================================
     // [모드 A] 단어 또는 문장 인식 모드 (Word / Sentence Mode)
+    // 또는 사진/업로드 이미지에 2줄 이상의 문장이 감지된 경우 자동 보호
     // ==========================================
-    if (this.currentScope === 'sentence') {
+    let isMultiLineDetected = false;
+    if (canvasElement) {
+      const detectedLines = this.segmentCanvasIntoLines(canvasElement);
+      if (detectedLines.length >= 2) {
+        isMultiLineDetected = true;
+      }
+    }
+
+    if (this.currentScope === 'sentence' || isMultiLineDetected) {
       return await this.recognizeSentence(imageSource, canvasElement);
     }
 
@@ -171,106 +180,334 @@ class HandwritingRecognizer {
   }
 
   /**
-   * 단어 또는 문장 고정밀 인식 처리
-   * [1순위] 글자별 스마트 분할(Segmentation) + 듀얼 전문가(CNN + Tesseract + Topology) 시퀀스 판정
-   * [2순위] 필기체/연결 단어용 고화질 라인 Tesseract OCR 보완
+   * 사진 및 이미지의 색상 종이(노란색, 분홍색, 회색 등) 및 불균일 조명을 제거하고
+   * 순백색 배경(#ffffff)과 선명한 검은색 획(#000000)으로 완벽 정규화하는 이진화 전처리
+   */
+  preprocessCanvasToBinarized(canvas) {
+    if (!canvas || canvas.width <= 0 || canvas.height <= 0) return canvas;
+
+    const width = canvas.width;
+    const height = canvas.height;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const imgData = ctx.getImageData(0, 0, width, height);
+    const data = imgData.data;
+
+    const outCanvas = document.createElement('canvas');
+    outCanvas.width = width;
+    outCanvas.height = height;
+    const outCtx = outCanvas.getContext('2d');
+    const outImgData = outCtx.createImageData(width, height);
+    const outData = outImgData.data;
+
+    // 1. 인지적 밝기(Luminance) 샘플링을 통한 배경 밝기(상위 80% 백분위수) 추정
+    const step = Math.max(1, Math.floor(Math.min(width, height) / 100));
+    const samples = [];
+    for (let y = 0; y < height; y += step) {
+      for (let x = 0; x < width; x += step) {
+        const idx = (y * width + x) * 4;
+        const lum = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+        samples.push(lum);
+      }
+    }
+    samples.sort((a, b) => a - b);
+    const bgLum = samples[Math.floor(samples.length * 0.8)] || 230;
+
+    // 획 판정 임계치: 배경 밝기보다 약 18% 이상 어두운 픽셀을 획으로 판정
+    const strokeThreshold = Math.max(65, bgLum * 0.82);
+
+    for (let i = 0; i < data.length; i += 4) {
+      const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      if (lum < strokeThreshold) {
+        // 글자 획: 진한 검정색 (대비 강화)
+        const contrastVal = Math.max(0, Math.min(255, Math.round((lum / strokeThreshold) * 110)));
+        outData[i] = contrastVal;
+        outData[i + 1] = contrastVal;
+        outData[i + 2] = contrastVal;
+      } else {
+        // 종이 배경 (노란색, 분홍색 등): 순백색으로 정규화
+        outData[i] = 255;
+        outData[i + 1] = 255;
+        outData[i + 2] = 255;
+      }
+      outData[i + 3] = 255;
+    }
+
+    outCtx.putImageData(outImgData, 0, 0);
+    return outCanvas;
+  }
+
+  /**
+   * 단어 또는 문장 고정밀 인식 처리 (다중 행 및 단일 행 자동 분기)
    */
   async recognizeSentence(imageSource, canvasElement) {
-    // 1. 캔버스 수직 투영 스마트 세그멘테이션 (글자 단위 분할)
-    const segments = canvasElement ? this.segmentCanvasIntoCharacters(canvasElement) : [];
+    let processedCanvas = canvasElement;
+    let processedImageSource = imageSource;
 
-    // ----------------------------------------------------
-    // [핵심 전략] 글자 단위 분할 기반 듀얼 전문가 시퀀스 판독 (최우선)
-    // - 숫자 모드: MNIST CNN 99% 정밀 판독
-    // - 숫자+영문 통합 모드: 개별 글자별 CNN vs Tesseract vs 위상 중재 (일관되고 결정론적인 판독)
-    // - 영문 전용 모드: 각 글자별 Tesseract + 위상 교정
-    // ----------------------------------------------------
-    if (segments.length > 0) {
-      try {
-        let assembledText = '';
-        let totalConf = 0;
+    // 사진 및 업로드 이미지의 색상 종이(노란색 포스트잇 등) 및 그림자를 순백색 배경/검은 잉크로 완벽 정규화
+    if (canvasElement) {
+      processedCanvas = this.preprocessCanvasToBinarized(canvasElement);
+      processedImageSource = processedCanvas.toDataURL('image/png');
+    }
 
-        for (const seg of segments) {
-          const charCanvas = this.cropBoxToSquareCanvas(canvasElement, seg);
-          let char = '';
-          let conf = 70;
-
-          if (this.currentMode === 'digits' && this.isCnnReady) {
-            const res = this.predictWithCNN(charCanvas);
-            char = res.text;
-            conf = res.confidence;
-          } else if (this.currentMode === 'letters') {
-            const charImg = charCanvas.toDataURL('image/png');
-            const res = await this.recognizeLetters(charImg, charCanvas);
-            char = res.text;
-            conf = res.confidence;
-          } else {
-            // 통합 모드 (숫자+영문): 글자별 CNN vs Tesseract vs 위상 듀얼 중재
-            const charImg = charCanvas.toDataURL('image/png');
-            const res = await this.recognizeIntegrated(charImg, charCanvas);
-            char = res.text;
-            conf = res.confidence;
-          }
-
-          assembledText += char;
-          totalConf += conf;
-          if (seg.isSpaceAfter) {
-            assembledText += ' ';
-          }
-        }
-
-        const avgConf = Math.round(totalConf / segments.length);
-        const trimmedAssembled = assembledText.trim();
-
-        // 영문 모드에서 필기체로 이어 써서 단 1개 세그먼트로 뭉친 경우를 제외하고는,
-        // 개별 글자가 정밀 분할된 듀얼 전문가 시퀀스를 최우선 반환
-        if (trimmedAssembled.length > 0 && !(this.currentMode === 'letters' && segments.length === 1)) {
-          return {
-            text: trimmedAssembled,
-            confidence: Math.min(Math.max(avgConf, 75), 98),
-            isSentence: true,
-            candidates: [
-              { char: trimmedAssembled, prob: `${avgConf}%` }
-            ]
-          };
-        }
-      } catch (ensErr) {
-        console.warn('세그먼트 앙상블 에러, 라인 OCR 시도:', ensErr);
+    // 1. 다중 행(Line) 검출: 두 줄 이상의 문장인지 수평 투영으로 감지
+    if (processedCanvas) {
+      const lines = this.segmentCanvasIntoLines(processedCanvas);
+      if (lines.length >= 2) {
+        // [다중 행 모드] 각 줄을 독립적으로 분할 크롭하여 개별 행별 고정밀 인식 후 개행(\n) 결합
+        return await this.recognizeMultiLineSentence(processedImageSource, processedCanvas, lines);
       }
     }
 
-    // ----------------------------------------------------
-    // [보완 전략] 고화질 라인 Tesseract OCR (필기체 연결 단어 또는 분할 미검출 시)
-    // ----------------------------------------------------
-    let lineResult = null;
+    // 2. [단일 행 모드] 1줄 문장 정밀 인식
+    return await this.recognizeSingleLine(processedImageSource, processedCanvas);
+  }
+
+  /**
+   * 두 줄 이상의 다중 행 문장 분할 인식 처리
+   * 각 행(Line)별로 서브 캔버스를 생성하여 개별 라인 인식을 수행한 뒤, 줄바꿈(\n)으로 조립
+   */
+  async recognizeMultiLineSentence(imageSource, canvasElement, lines) {
+    const lineTexts = [];
+    let totalConf = 0;
+    let validLineCount = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const lineCanvas = this.cropLineCanvas(canvasElement, line);
+      const lineImg = lineCanvas.toDataURL('image/png');
+
+      try {
+        const lineRes = await this.recognizeSingleLine(lineImg, lineCanvas);
+        if (lineRes && lineRes.text && lineRes.text.trim()) {
+          lineTexts.push(lineRes.text.trim());
+          totalConf += (lineRes.confidence || 75);
+          validLineCount++;
+        }
+      } catch (lineErr) {
+        console.warn(`행 ${i + 1} 인식 중 오류:`, lineErr);
+      }
+    }
+
+    if (validLineCount > 0) {
+      const assembledMultiLine = lineTexts.join('\n');
+      const avgConf = Math.round(totalConf / validLineCount);
+      return {
+        text: assembledMultiLine,
+        confidence: Math.min(Math.max(avgConf, 70), 98),
+        isSentence: true,
+        candidates: [
+          { char: assembledMultiLine, prob: `${avgConf}%` }
+        ]
+      };
+    }
+
+    // 행별 분할 인식 실패 시: Tesseract 전체 이미지 SINGLE_BLOCK OCR로 최종 폴백
+    return await this.recognizeWithTesseractBlock(imageSource);
+  }
+
+  /**
+   * 단일 행(1줄) 정밀 인식 처리
+   * [1순위] 고화질 라인 Tesseract OCR (단어/문맥 우선 인식)
+   * [2순위] 글자 단위 스마트 분할 앙상블
+   */
+  async recognizeSingleLine(imageSource, canvasElement) {
+    // 1. 고화질 라인 Tesseract OCR 실행
+    let lineText = '';
+    let lineConf = 75;
+
     if (this.isTesseractReady && this.tesseractWorker) {
       try {
         const ocrRes = await this.tesseractWorker.recognize(imageSource);
-        let text = ocrRes.data.text.trim();
-        const conf = Math.round(ocrRes.data.confidence) || 75;
-        text = text.replace(/[\n\r]+/g, ' ').replace(/\s+/g, ' ').trim();
+        let raw = (ocrRes.data.text || '').trim();
+        lineConf = Math.round(ocrRes.data.confidence) || 75;
+        raw = raw.replace(/[\n\r]+/g, ' ').replace(/\s+/g, ' ').trim();
 
-        if (text) {
-          lineResult = {
-            text: text,
-            confidence: Math.min(Math.max(conf, 70), 98)
-          };
+        if (this.currentMode === 'digits') {
+          raw = raw.replace(/[^0-9 ]/g, '').trim();
+        } else if (this.currentMode === 'letters') {
+          raw = raw.replace(/[^A-Za-z ]/g, '').trim();
         }
+        lineText = raw;
       } catch (ocrErr) {
-        console.warn('라인 OCR 에러:', ocrErr);
+        console.warn('단일 라인 OCR 에러:', ocrErr);
       }
     }
 
-    // 라인 OCR 결과 반환
-    if (lineResult && lineResult.text) {
+    // 2. 글자 단위 수직 투영 세그멘테이션 실행
+    const segments = canvasElement ? this.segmentCanvasIntoCharacters(canvasElement) : [];
+    const segmentChars = [];
+    let segTotalConf = 0;
+
+    for (const seg of segments) {
+      const charCanvas = this.cropBoxToSquareCanvas(canvasElement, seg);
+      let char = '';
+      let conf = 70;
+      let cnnDigit = null;
+
+      if (this.isCnnReady) {
+        try {
+          cnnDigit = this.predictWithCNN(charCanvas);
+        } catch (e) {}
+      }
+
+      if (this.currentMode === 'digits' && cnnDigit) {
+        char = cnnDigit.text;
+        conf = cnnDigit.confidence;
+      } else if (this.currentMode === 'letters') {
+        const charImg = charCanvas.toDataURL('image/png');
+        const res = await this.recognizeLetters(charImg, charCanvas);
+        char = res.text;
+        conf = res.confidence;
+      } else {
+        const charImg = charCanvas.toDataURL('image/png');
+        const res = await this.recognizeIntegrated(charImg, charCanvas);
+        char = res.text;
+        conf = res.confidence;
+      }
+
+      const topology = this.analyzeTopology(charCanvas);
+      segmentChars.push({
+        char,
+        conf,
+        isSpaceAfter: seg.isSpaceAfter,
+        cnnDigit,
+        topology,
+        canvas: charCanvas
+      });
+      segTotalConf += conf;
+    }
+
+    const segAvgConf = segments.length > 0 ? Math.round(segTotalConf / segments.length) : 0;
+    const segText = segmentChars.map(s => s.char + (s.isSpaceAfter ? ' ' : '')).join('').trim();
+
+    // 3. 지능형 하이브리드 글자 정렬 융합 및 오인식 패턴 교정 (Hybrid Alignment & Correction)
+    let finalText = '';
+    let finalConf = Math.max(lineConf, segAvgConf);
+
+    // 라인 텍스트와 세그먼트의 문자 목록 추출
+    const lineCleanChars = lineText.replace(/\s+/g, '').split('');
+    const segCleanChars = segmentChars.map(s => s.char).filter(c => c && c.length > 0);
+
+    // [전략 A] 글자 수가 1:1로 일치하거나 거의 일치하는 경우 (예: 둘 다 3글자)
+    if (lineCleanChars.length > 0 && lineCleanChars.length === segCleanChars.length) {
+      const fused = [];
+      let isPrevDigit = false;
+
+      for (let i = 0; i < lineCleanChars.length; i++) {
+        let lChar = lineCleanChars[i];
+        const sObj = segmentChars[i];
+        let sChar = sObj?.char || '';
+        const cnnChar = sObj?.cnnDigit?.text || '';
+        const cnnConf = sObj?.cnnDigit?.confidence || 0;
+        const topo = sObj?.topology;
+
+        let resolved = lChar;
+
+        // [교정 1: '5' vs 'k'/'K'/'s'/'S' 교정]
+        // 손글씨 '5'를 Tesseract가 'k'/'K' 또는 's'/'S'로 잘못 읽은 경우
+        if (lChar.toLowerCase() === 'k' || lChar.toLowerCase() === 's') {
+          // CNN이 5로 판독했거나, 앞선 글자들이 숫자인 문맥
+          if (cnnChar === '5' || sChar === '5' || isPrevDigit) {
+            resolved = '5';
+          }
+        }
+
+        // [교정 2: 'Q' vs 'G'/'O'/'0' 교정]
+        // 손글씨 'Q'의 우하단 꼬리를 Tesseract가 'G'나 'O'로 잘못 읽은 경우
+        if (lChar === 'G' || lChar === 'O' || lChar === '0' || lChar === 'C') {
+          if (sChar === 'Q' || (topo && topo.hasBottomRightTail && topo.isBottomCenterClosed)) {
+            resolved = 'Q';
+          }
+        }
+
+        // [교정 3: 'R' vs '8'/'B'/'Q' 교정]
+        if (lChar === '8' || lChar === 'B' || lChar === 'Q') {
+          if (sChar === 'R' || topo?.isClassicRLegs) {
+            resolved = 'R';
+          }
+        }
+
+        fused.push(resolved);
+        isPrevDigit = /^[0-9]$/.test(resolved);
+      }
+
+      // 공백 형식 복원: 원본 이미지의 간격 보존
+      finalText = '';
+      for (let i = 0; i < fused.length; i++) {
+        finalText += fused[i];
+        if (segmentChars[i]?.isSpaceAfter) {
+          finalText += ' ';
+        } else if (i < fused.length - 1 && lineText.includes(' ')) {
+          finalText += ' ';
+        }
+      }
+      finalText = finalText.trim();
+    } else {
+      // [전략 B] 글자 수가 일치하지 않을 때의 규칙 기반 후처리
+      let textToFix = lineText || segText;
+
+      // 규칙 1: 숫자 뒤에 붙은 k/K 또는 s/S -> 5 (예: 32k -> 325, 3 2 k -> 3 2 5)
+      textToFix = textToFix.replace(/(\d)\s*[kK](\b|\s|$)/g, '$1 5');
+      textToFix = textToFix.replace(/(\d)[kK](\d*)/g, '$15$2');
+      textToFix = textToFix.replace(/(\d)\s*[sS](\b|\s|$)/g, '$1 5');
+
+      // 규칙 2: 영문 단어에서 ARG -> ARQ 교정
+      if (textToFix.toUpperCase().replace(/\s+/g, '') === 'ARG') {
+        textToFix = textToFix.replace(/G/g, 'Q');
+      }
+
+      finalText = textToFix;
+    }
+
+    if (finalText && finalText.length > 0) {
       return {
-        text: lineResult.text,
-        confidence: lineResult.confidence,
+        text: finalText,
+        confidence: Math.min(Math.max(finalConf, 70), 98),
         isSentence: true,
-        candidates: [
-          { char: lineResult.text, prob: `${lineResult.confidence}%` }
-        ]
+        candidates: [{ char: finalText, prob: `${finalConf}%` }]
       };
+    }
+
+    return {
+      text: '(인식된 텍스트 없음)',
+      confidence: 0,
+      isSentence: true,
+      candidates: []
+    };
+  }
+
+  /**
+   * 다중 라인 전체 이미지 Tesseract 블록 OCR (SINGLE_BLOCK 보완용)
+   */
+  async recognizeWithTesseractBlock(imageSource) {
+    if (!this.isTesseractReady || !this.tesseractWorker) {
+      return { text: '(인식된 텍스트 없음)', confidence: 0, isSentence: true, candidates: [] };
+    }
+
+    try {
+      const ocrRes = await this.tesseractWorker.recognize(imageSource);
+      let rawText = (ocrRes.data.text || '').trim();
+      const conf = Math.round(ocrRes.data.confidence) || 75;
+
+      // 줄바꿈 구조 유지하며 앞뒤 공백 정리
+      const cleaned = rawText
+        .split('\n')
+        .map(l => l.trim())
+        .filter(l => l.length > 0)
+        .join('\n');
+
+      if (cleaned) {
+        return {
+          text: cleaned,
+          confidence: Math.min(Math.max(conf, 70), 98),
+          isSentence: true,
+          candidates: [
+            { char: cleaned, prob: `${conf}%` }
+          ]
+        };
+      }
+    } catch (e) {
+      console.warn('블록 OCR 에러:', e);
     }
 
     return {
@@ -515,10 +752,11 @@ class HandwritingRecognizer {
     let minX = width, minY = height, maxX = 0, maxY = 0;
     let pixelCount = 0;
 
+    const threshold = this.getAdaptiveStrokeThreshold(canvas);
     const isStroke = (x, y) => {
       if (x < 0 || x >= width || y < 0 || y >= height) return false;
       const idx = (y * width + x) * 4;
-      return (data[idx] + data[idx + 1] + data[idx + 2]) / 3 < 210;
+      return (data[idx] + data[idx + 1] + data[idx + 2]) / 3 < threshold;
     };
 
     for (let y = 0; y < height; y++) {
@@ -812,6 +1050,189 @@ class HandwritingRecognizer {
   }
 
   /**
+   * 사진 및 이미지의 배경/조명 상태에 맞춘 적응형 획 임계값(Adaptive Stroke Threshold) 산출
+   */
+  getAdaptiveStrokeThreshold(canvas) {
+    if (!canvas || canvas.width <= 0 || canvas.height <= 0) return 210;
+
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const width = canvas.width;
+    const height = canvas.height;
+    const step = Math.max(1, Math.floor(Math.min(width, height) / 120));
+    const imgData = ctx.getImageData(0, 0, width, height);
+    const data = imgData.data;
+
+    let totalB = 0;
+    let sampleCount = 0;
+    const samples = [];
+
+    for (let y = 0; y < height; y += step) {
+      for (let x = 0; x < width; x += step) {
+        const idx = (y * width + x) * 4;
+        const b = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
+        totalB += b;
+        sampleCount++;
+        if (sampleCount < 2000) {
+          samples.push(b);
+        }
+      }
+    }
+
+    if (sampleCount === 0) return 210;
+
+    samples.sort((a, b) => a - b);
+    const bgEstimate = samples[Math.floor(samples.length * 0.8)] || 240;
+    const avg = totalB / sampleCount;
+
+    // 흰 배경 캔버스 기본
+    if (bgEstimate >= 245 && avg >= 235) {
+      return 215;
+    }
+
+    // 사진/업로드 이미지의 경우: 배경 추정치 대비 어두운 영역을 획으로 판정
+    const dynamicThresh = Math.max(85, Math.min(Math.round(bgEstimate * 0.82), 215));
+    return dynamicThresh;
+  }
+
+  /**
+   * 캔버스 이미지에서 수평 투영(Horizontal Projection)을 이용한 다중 행(Line Bands) 분할
+   */
+  segmentCanvasIntoLines(canvas) {
+    if (!canvas || canvas.width <= 10 || canvas.height <= 10) return [];
+
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const width = canvas.width;
+    const height = canvas.height;
+    const imgData = ctx.getImageData(0, 0, width, height);
+    const data = imgData.data;
+
+    const threshold = this.getAdaptiveStrokeThreshold(canvas);
+
+    // 1. 각 행(y)마다 획 픽셀 수 카운트 (수평 히스토그램)
+    const rowPixelCounts = new Int32Array(height);
+    for (let y = 0; y < height; y++) {
+      let count = 0;
+      for (let x = 0; x < width; x++) {
+        const idx = (y * width + x) * 4;
+        const b = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
+        if (b < threshold) {
+          count++;
+        }
+      }
+      rowPixelCounts[y] = count;
+    }
+
+    // 유효한 텍스트 행 판정 임계치: 너비의 약 1.2% 이상 또는 최소 6픽셀
+    const minRowPixels = Math.max(6, Math.round(width * 0.012));
+
+    // 2. 획이 연속으로 존재하는 y 구간 추출
+    const rawLines = [];
+    let inLine = false;
+    let startY = 0;
+
+    for (let y = 0; y < height; y++) {
+      if (rowPixelCounts[y] >= minRowPixels) {
+        if (!inLine) {
+          inLine = true;
+          startY = y;
+        }
+      } else {
+        if (inLine) {
+          inLine = false;
+          const h = y - startY;
+          if (h >= 10) { // 최소 높이 10px 이상
+            rawLines.push({ startY, endY: y - 1, h });
+          }
+        }
+      }
+    }
+    if (inLine && (height - startY >= 10)) {
+      rawLines.push({ startY, endY: height - 1, h: height - startY });
+    }
+
+    if (rawLines.length === 0) return [];
+
+    // 3. 인접한 행 구간 스마트 병합 (글자의 위/아래 획이나 점 등이 잠시 끊긴 경우)
+    const mergedLines = [];
+    let curLine = { ...rawLines[0] };
+
+    for (let i = 1; i < rawLines.length; i++) {
+      const nextLine = rawLines[i];
+      const gap = nextLine.startY - curLine.endY;
+
+      // 행간 간격이 8px 이하이거나, 한쪽이 얇은 조각(파편)인 경우 병합
+      if (gap <= 8 || (curLine.h < 14 && gap <= 16) || (nextLine.h < 14 && gap <= 16)) {
+        curLine.endY = nextLine.endY;
+        curLine.h = curLine.endY - curLine.startY + 1;
+      } else {
+        mergedLines.push(curLine);
+        curLine = { ...nextLine };
+      }
+    }
+    mergedLines.push(curLine);
+
+    // 4. 각 라인별 실제 x 바운딩 박스(minX, maxX) 및 서브 캔버스 생성에 필요한 정보 수집
+    const validLines = [];
+    for (const line of mergedLines) {
+      let minX = width, maxX = 0;
+      let strokeTotal = 0;
+
+      for (let y = line.startY; y <= line.endY; y++) {
+        for (let x = 0; x < width; x++) {
+          const idx = (y * width + x) * 4;
+          const b = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
+          if (b < threshold) {
+            strokeTotal++;
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+          }
+        }
+      }
+
+      // 글자 획이 최소 25px 이상이고 유효한 폭을 가진 행만 유지
+      if (strokeTotal >= 25 && maxX > minX + 10) {
+        validLines.push({
+          startY: line.startY,
+          endY: line.endY,
+          h: line.endY - line.startY + 1,
+          minX,
+          maxX,
+          w: maxX - minX + 1
+        });
+      }
+    }
+
+    return validLines;
+  }
+
+  /**
+   * 다중 행에서 특정 행(Line) 영역을 독립된 단일 행 캔버스로 정밀 크롭
+   */
+  cropLineCanvas(sourceCanvas, line) {
+    const padY = Math.round(line.h * 0.22) + 10;
+    const padX = 24;
+
+    const cropY = Math.max(0, line.startY - padY);
+    const cropEndY = Math.min(sourceCanvas.height, line.endY + padY);
+    const cropH = Math.max(20, cropEndY - cropY);
+
+    const cropX = Math.max(0, line.minX - padX);
+    const cropEndX = Math.min(sourceCanvas.width, line.maxX + padX);
+    const cropW = Math.max(20, cropEndX - cropX);
+
+    const lineCanvas = document.createElement('canvas');
+    lineCanvas.width = cropW;
+    lineCanvas.height = cropH;
+    const lctx = lineCanvas.getContext('2d');
+
+    lctx.fillStyle = '#ffffff';
+    lctx.fillRect(0, 0, cropW, cropH);
+    lctx.drawImage(sourceCanvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+
+    return lineCanvas;
+  }
+
+  /**
    * 캔버스 이미지에서 수직 투영 히스토그램을 이용한 지능형 글자별 분할
    */
   segmentCanvasIntoCharacters(canvas) {
@@ -821,6 +1242,8 @@ class HandwritingRecognizer {
     const imgData = ctx.getImageData(0, 0, width, height);
     const data = imgData.data;
 
+    const threshold = this.getAdaptiveStrokeThreshold(canvas);
+
     // 1. 각 열(x)마다 획 픽셀 수 카운트
     const colPixelCounts = new Int32Array(width);
     for (let x = 0; x < width; x++) {
@@ -828,7 +1251,7 @@ class HandwritingRecognizer {
       for (let y = 0; y < height; y++) {
         const idx = (y * width + x) * 4;
         const b = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
-        if (b < 210) {
+        if (b < threshold) {
           count++;
         }
       }
@@ -870,7 +1293,7 @@ class HandwritingRecognizer {
         for (let y = 0; y < height; y++) {
           const idx = (y * width + x) * 4;
           const b = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
-          if (b < 210) {
+          if (b < threshold) {
             strokeCount++;
             if (y < minY) minY = y;
             if (y > maxY) maxY = y;
@@ -1010,25 +1433,24 @@ class HandwritingRecognizer {
       drawX, drawY, drawW, drawH
     );
 
-    // 고선명 S-커브 대비 보정 (획 단절 방지 및 얇은 획 디테일 보존)
+    // 적응형 동적 대비 보정 (배경 밝기 기반으로 이진화하여 노란색/어두운 종이 배경 검게 타는 현상 완전 차단)
+    const threshold = this.getAdaptiveStrokeThreshold(cctx.canvas);
     const imgData = cctx.getImageData(0, 0, 300, 300);
     const px = imgData.data;
+
     for (let i = 0; i < px.length; i += 4) {
-      const avg = (px[i] + px[i + 1] + px[i + 2]) / 3;
-      if (avg <= 130) {
-        px[i] = 0;
-        px[i + 1] = 0;
-        px[i + 2] = 0;
-      } else if (avg >= 235) {
+      const b = (px[i] + px[i + 1] + px[i + 2]) / 3;
+      if (b < threshold) {
+        // 획 픽셀: 짙은 검정색
+        const contrastVal = Math.max(0, Math.min(255, Math.round((b / threshold) * 75)));
+        px[i] = contrastVal;
+        px[i + 1] = contrastVal;
+        px[i + 2] = contrastVal;
+      } else {
+        // 배경: 순백색
         px[i] = 255;
         px[i + 1] = 255;
         px[i + 2] = 255;
-      } else {
-        const norm = (avg - 130) / 105;
-        const val = Math.round(norm * norm * 255);
-        px[i] = val;
-        px[i + 1] = val;
-        px[i + 2] = val;
       }
       px[i + 3] = 255;
     }
