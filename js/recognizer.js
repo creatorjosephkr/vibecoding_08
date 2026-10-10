@@ -144,20 +144,30 @@ class HandwritingRecognizer {
       await this.init();
     }
 
+    // [전처리 혁신] 카메라 촬영 및 업로드 사진:
+    // 어두운 배경(칠판, 블랙보드, 어두운 종이), 저조도/그림자 환경, 유색 배경을
+    // Otsu 컴퓨터 비전 적응형 이진화로 즉시 판별하여 '흰 배경 + 검은 글씨'로 표준화!
+    let processedCanvas = canvasElement;
+    let processedImageSource = imageSource;
+    if (canvasElement) {
+      processedCanvas = this.preprocessCanvasToBinarized(canvasElement);
+      processedImageSource = processedCanvas.toDataURL('image/png');
+    }
+
     // ==========================================
     // [모드 A] 단어 또는 문장 인식 모드 (Word / Sentence Mode)
     // 또는 사진/업로드 이미지에 2줄 이상의 문장이 감지된 경우 자동 보호
     // ==========================================
     let isMultiLineDetected = false;
-    if (canvasElement) {
-      const detectedLines = this.segmentCanvasIntoLines(canvasElement);
+    if (processedCanvas) {
+      const detectedLines = this.segmentCanvasIntoLines(processedCanvas);
       if (detectedLines.length >= 2) {
         isMultiLineDetected = true;
       }
     }
 
     if (this.currentScope === 'sentence' || isMultiLineDetected) {
-      return await this.recognizeSentence(imageSource, canvasElement);
+      return await this.recognizeSentence(processedImageSource, processedCanvas);
     }
 
     // ==========================================
@@ -165,23 +175,66 @@ class HandwritingRecognizer {
     // ==========================================
     // [B-1] 숫자 전용 모드: CNN 딥러닝 100% 전담 (정확도 99%)
     if (this.currentMode === 'digits') {
-      if (this.isCnnReady && canvasElement) {
-        return this.predictWithCNN(canvasElement);
+      if (this.isCnnReady && processedCanvas) {
+        return this.predictWithCNN(processedCanvas);
       }
     }
 
     // [B-2] 영문 전용 모드: 영문 전문 엔진(Tesseract A-Za-z + 위상/CNN 협력) 처리
     if (this.currentMode === 'letters') {
-      return await this.recognizeLetters(imageSource, canvasElement);
+      return await this.recognizeLetters(processedImageSource, processedCanvas);
     }
 
     // [B-3] 숫자+영문 통합 모드: 두 전문가(CNN vs Tesseract)의 교차 판정
-    return await this.recognizeIntegrated(imageSource, canvasElement);
+    return await this.recognizeIntegrated(processedImageSource, processedCanvas);
   }
 
   /**
-   * 사진 및 이미지의 색상 종이(노란색, 분홍색, 회색 등) 및 불균일 조명을 제거하고
-   * 순백색 배경(#ffffff)과 선명한 검은색 획(#000000)으로 완벽 정규화하는 이진화 전처리
+   * Otsu 이진화 알고리즘: 클래스 간 분산을 최대화하는 최적의 임계값(Threshold) 자동 산출
+   */
+  computeOtsuThreshold(data) {
+    const histogram = new Int32Array(256);
+    const totalPixels = data.length / 4;
+
+    for (let i = 0; i < data.length; i += 4) {
+      const lum = Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
+      histogram[lum]++;
+    }
+
+    let sum = 0;
+    for (let t = 0; t < 256; t++) {
+      sum += t * histogram[t];
+    }
+
+    let sumB = 0;
+    let wB = 0;
+    let wF = 0;
+    let varMax = 0;
+    let threshold = 128;
+
+    for (let t = 0; t < 256; t++) {
+      wB += histogram[t];
+      if (wB === 0) continue;
+      wF = totalPixels - wB;
+      if (wF === 0) break;
+
+      sumB += t * histogram[t];
+      const mB = sumB / wB;
+      const mF = (sum - sumB) / wF;
+
+      const varBetween = wB * wF * (mB - mF) * (mB - mF);
+      if (varBetween > varMax) {
+        varMax = varBetween;
+        threshold = t;
+      }
+    }
+
+    return threshold;
+  }
+
+  /**
+   * 사진 및 이미지의 배경 상태(어두운 배경/칠판, 밝은 배경/종이, 유색지, 그림자)를
+   * 컴퓨터 비전 극성 판별 및 Otsu 적응형 이진화로 '순백색 배경 + 짙은 검은색 획'으로 완벽 변환
    */
   preprocessCanvasToBinarized(canvas) {
     if (!canvas || canvas.width <= 0 || canvas.height <= 0) return canvas;
@@ -192,6 +245,32 @@ class HandwritingRecognizer {
     const imgData = ctx.getImageData(0, 0, width, height);
     const data = imgData.data;
 
+    // 1. 이미지 가장자리(외곽 10% 테두리) 영역 샘플링으로 배경 밝기 추정
+    let borderLumSum = 0;
+    let borderCount = 0;
+    const step = Math.max(1, Math.floor(Math.min(width, height) / 100));
+
+    for (let y = 0; y < height; y += step) {
+      for (let x = 0; x < width; x += step) {
+        const idx = (y * width + x) * 4;
+        const lum = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+        if (x < width * 0.1 || x > width * 0.9 || y < height * 0.1 || y > height * 0.9) {
+          borderLumSum += lum;
+          borderCount++;
+        }
+      }
+    }
+
+    const bgLum = borderCount > 0 ? (borderLumSum / borderCount) : 128;
+
+    // 2. Otsu 알고리즘으로 최적의 분기 임계값 계산
+    const otsuT = this.computeOtsuThreshold(data);
+
+    // 3. 극성(Polarity) 판별:
+    // - 어두운 배경(칠판 분필, 검은 종이, 다크모드 등): 가장자리 배경이 Otsu 임계값보다 어두움 (bgLum < otsuT)
+    // - 밝은 배경(일반 종이, 노란색 포스트잇 등): 가장자리 배경이 Otsu 임계값보다 밝음 (bgLum >= otsuT)
+    const isDarkBackground = bgLum < otsuT;
+
     const outCanvas = document.createElement('canvas');
     outCanvas.width = width;
     outCanvas.height = height;
@@ -199,32 +278,26 @@ class HandwritingRecognizer {
     const outImgData = outCtx.createImageData(width, height);
     const outData = outImgData.data;
 
-    // 1. 인지적 밝기(Luminance) 샘플링을 통한 배경 밝기(상위 80% 백분위수) 추정
-    const step = Math.max(1, Math.floor(Math.min(width, height) / 100));
-    const samples = [];
-    for (let y = 0; y < height; y += step) {
-      for (let x = 0; x < width; x += step) {
-        const idx = (y * width + x) * 4;
-        const lum = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
-        samples.push(lum);
-      }
-    }
-    samples.sort((a, b) => a - b);
-    const bgLum = samples[Math.floor(samples.length * 0.8)] || 230;
-
-    // 획 판정 임계치: 배경 밝기보다 약 18% 이상 어두운 픽셀을 획으로 판정
-    const strokeThreshold = Math.max(65, bgLum * 0.82);
-
+    // 4. 어떤 환경이든 OCR 표준 규격('순백색 #ffffff 배경 + 짙은 검정색 #000000 글자')으로 정규화
     for (let i = 0; i < data.length; i += 4) {
       const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-      if (lum < strokeThreshold) {
-        // 글자 획: 진한 검정색 (대비 강화)
-        const contrastVal = Math.max(0, Math.min(255, Math.round((lum / strokeThreshold) * 110)));
-        outData[i] = contrastVal;
-        outData[i + 1] = contrastVal;
-        outData[i + 2] = contrastVal;
+      let isStrokePixel = false;
+
+      if (isDarkBackground) {
+        // 어두운 배경: 임계값보다 밝은 픽셀이 글자 획! (자동 반전 처리)
+        isStrokePixel = lum >= otsuT;
       } else {
-        // 종이 배경 (노란색, 분홍색 등): 순백색으로 정규화
+        // 밝은 배경: 임계값보다 어두운 픽셀이 글자 획!
+        isStrokePixel = lum < otsuT;
+      }
+
+      if (isStrokePixel) {
+        // 글자 획 -> 짙은 검정색
+        outData[i] = 0;
+        outData[i + 1] = 0;
+        outData[i + 2] = 0;
+      } else {
+        // 배경 -> 순백색
         outData[i] = 255;
         outData[i + 1] = 255;
         outData[i + 2] = 255;
@@ -243,9 +316,10 @@ class HandwritingRecognizer {
     let processedCanvas = canvasElement;
     let processedImageSource = imageSource;
 
-    // 사진 및 업로드 이미지의 색상 종이(노란색 포스트잇 등) 및 그림자를 순백색 배경/검은 잉크로 완벽 정규화
-    if (canvasElement) {
+    // 이미 진입점에서 전처리되지 않은 경우를 대비한 안전망
+    if (canvasElement && !canvasElement._isBinarized) {
       processedCanvas = this.preprocessCanvasToBinarized(canvasElement);
+      processedCanvas._isBinarized = true;
       processedImageSource = processedCanvas.toDataURL('image/png');
     }
 
@@ -1090,7 +1164,7 @@ class HandwritingRecognizer {
     }
 
     // 사진/업로드 이미지의 경우: 배경 추정치 대비 어두운 영역을 획으로 판정
-    const dynamicThresh = Math.max(85, Math.min(Math.round(bgEstimate * 0.82), 215));
+    const dynamicThresh = Math.max(40, Math.min(Math.round(bgEstimate * 0.82), 215));
     return dynamicThresh;
   }
 
