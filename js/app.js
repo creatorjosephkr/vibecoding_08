@@ -354,13 +354,75 @@ document.addEventListener('DOMContentLoaded', async () => {
     const videoW = cameraVideo.videoWidth || 640;
     const videoH = cameraVideo.videoHeight || 480;
 
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = videoW;
-    tempCanvas.height = videoH;
-    const ctx = tempCanvas.getContext('2d');
-    ctx.drawImage(cameraVideo, 0, 0, videoW, videoH);
+    // 1. 점선 가이드 박스(.camera-guide-box)의 뷰파인더 내 실제 표시 위치 계산
+    const container = cameraStreamContainer;
+    const guideBox = document.querySelector('.camera-guide-box');
 
-    const dataUrl = tempCanvas.toDataURL('image/png');
+    let cropX = 0, cropY = 0, cropW = videoW, cropH = videoH;
+
+    if (container && guideBox) {
+      const cRect = container.getBoundingClientRect();
+      const gRect = guideBox.getBoundingClientRect();
+
+      const cW = cRect.width || 1;
+      const cH = cRect.height || 1;
+
+      // 비디오 태그의 object-fit: cover 스케일 및 오프셋 역산
+      const containerRatio = cW / cH;
+      const videoRatio = videoW / videoH;
+
+      let scale = 1;
+      let offsetX = 0;
+      let offsetY = 0;
+
+      if (videoRatio > containerRatio) {
+        // 비디오의 좌우 영역이 잘려 있는 상태
+        scale = videoH / cH;
+        const visibleW = cW * scale;
+        offsetX = (videoW - visibleW) / 2;
+        offsetY = 0;
+      } else {
+        // 비디오의 상하 영역이 잘려 있는 상태
+        scale = videoW / cW;
+        const visibleH = cH * scale;
+        offsetX = 0;
+        offsetY = (videoH - visibleH) / 2;
+      }
+
+      // 컨테이너 기준 가이드 박스의 상대적 위치
+      const relX = gRect.left - cRect.left;
+      const relY = gRect.top - cRect.top;
+      const relW = gRect.width;
+      const relH = gRect.height;
+
+      // 비디오 네이티브 해상도 좌표계로 정밀 매핑
+      cropX = Math.round(offsetX + relX * scale);
+      cropY = Math.round(offsetY + relY * scale);
+      cropW = Math.round(relW * scale);
+      cropH = Math.round(relH * scale);
+
+      // 경계값 클램핑
+      cropX = Math.max(0, Math.min(cropX, videoW - 10));
+      cropY = Math.max(0, Math.min(cropY, videoH - 10));
+      cropW = Math.max(10, Math.min(cropW, videoW - cropX));
+      cropH = Math.max(10, Math.min(cropH, videoH - cropY));
+    } else {
+      // 대체 비율 크롭 (중앙 가로 78% x 세로 72%)
+      cropW = Math.round(videoW * 0.78);
+      cropH = Math.round(videoH * 0.72);
+      cropX = Math.round((videoW - cropW) / 2);
+      cropY = Math.round((videoH - cropH) / 2);
+    }
+
+    const cropCanvas = document.createElement('canvas');
+    cropCanvas.width = cropW;
+    cropCanvas.height = cropH;
+    const ctx = cropCanvas.getContext('2d');
+
+    // 점선 영역만 크롭하여 드로잉
+    ctx.drawImage(cameraVideo, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+
+    const dataUrl = cropCanvas.toDataURL('image/png');
     capturedPhotoSource = dataUrl;
     uploadedImageSource = dataUrl;
 
@@ -370,7 +432,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     capturePhotoBtn.style.display = 'none';
 
     stopCameraStream();
-    showToast('사진이 촬영되었습니다! 아래 [지금 인식하기]를 눌러보세요.');
+    showToast('점선 영역만 잘라서 촬영했습니다! [지금 인식하기]를 눌러보세요.');
   }
 
   function retakePhoto() {
@@ -398,15 +460,34 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const reader = new FileReader();
     reader.onload = (e) => {
-      const dataUrl = e.target.result;
-      capturedPhotoSource = dataUrl;
-      uploadedImageSource = dataUrl;
-      capturedImagePreview.src = dataUrl;
-      cameraStreamContainer.style.display = 'none';
-      cameraCapturedContainer.style.display = 'flex';
-      capturePhotoBtn.style.display = 'none';
-      stopCameraStream();
-      showToast('사진 촬영이 완료되었습니다! 아래 [지금 인식하기]를 눌러보세요.');
+      const img = new Image();
+      img.onload = () => {
+        const origW = img.naturalWidth || img.width;
+        const origH = img.naturalHeight || img.height;
+
+        // 점선 가이드 영역 비율(중앙 78% x 72%)로 자동 크롭
+        const cropW = Math.round(origW * 0.78);
+        const cropH = Math.round(origH * 0.72);
+        const cropX = Math.round((origW - cropW) / 2);
+        const cropY = Math.round((origH - cropH) / 2);
+
+        const cropCanvas = document.createElement('canvas');
+        cropCanvas.width = cropW;
+        cropCanvas.height = cropH;
+        const cctx = cropCanvas.getContext('2d');
+        cctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+
+        const dataUrl = cropCanvas.toDataURL('image/png');
+        capturedPhotoSource = dataUrl;
+        uploadedImageSource = dataUrl;
+        capturedImagePreview.src = dataUrl;
+        cameraStreamContainer.style.display = 'none';
+        cameraCapturedContainer.style.display = 'flex';
+        capturePhotoBtn.style.display = 'none';
+        stopCameraStream();
+        showToast('점선 영역만 잘라서 저장되었습니다! [지금 인식하기]를 눌러보세요.');
+      };
+      img.src = e.target.result;
     };
     reader.readAsDataURL(file);
   }
