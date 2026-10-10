@@ -634,39 +634,126 @@ body {
   display: none;
   position: relative;
   width: 100%;
-  height: 100%;
+  aspect-ratio: 1 / 0.75;
+  background: #090d16;
   border-radius: var(--radius-md);
   overflow: hidden;
+  border: 2px solid rgba(99, 102, 241, 0.6);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  align-items: center;
+  justify-content: center;
 }
 
 #imagePreview {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  background: #ffffff;
+  background: #090d16;
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.upload-preview-actions {
+  position: absolute;
+  bottom: 0.75rem;
+  right: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  z-index: 20;
 }
 
 .remove-image-btn {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  background: rgba(15, 23, 42, 0.8);
+  background: rgba(239, 68, 68, 0.85);
   color: #fff;
-  border: none;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 0.45rem 0.85rem;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.78rem;
+  font-size: 0.82rem;
+  font-weight: 600;
   transition: all var(--transition-fast);
+  backdrop-filter: blur(4px);
 }
 
 .remove-image-btn:hover {
   background: var(--accent-danger);
-  transform: scale(1.1);
+  transform: translateY(-1px);
+}
+
+/* ========================================================
+   Region Selection Layer & Crop Box (드래그 영역 설정 공통)
+   ======================================================== */
+.region-select-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 15;
+  cursor: crosshair;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.region-box {
+  position: absolute;
+  border: 2px dashed #818cf8;
+  background: rgba(99, 102, 241, 0.22);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+  border-radius: 4px;
+  z-index: 2;
+  box-sizing: border-box;
+}
+
+.region-tag {
+  position: absolute;
+  top: -24px;
+  left: -2px;
+  background: #6366f1;
+  color: #ffffff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 3px;
+  pointer-events: none;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  letter-spacing: -0.01em;
+}
+
+.region-corner {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: #ffffff;
+  border: 1.5px solid #6366f1;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.region-corner.tl { top: -4px; left: -4px; }
+.region-corner.tr { top: -4px; right: -4px; }
+.region-corner.bl { bottom: -4px; left: -4px; }
+.region-corner.br { bottom: -4px; right: -4px; }
+
+.region-guide-hint {
+  margin: 0.5rem 0 0.1rem;
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--accent-primary);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  line-height: 1.4;
+  animation: fadeIn 0.25s ease-out;
 }
 
 /* ========================================================
@@ -795,7 +882,10 @@ body {
   position: absolute;
   bottom: 0.75rem;
   right: 0.75rem;
-  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  z-index: 20;
 }
 
 .camera-toolbar {

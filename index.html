@@ -151,12 +151,26 @@
 
         <!-- 촬영된 사진 미리보기 영역 -->
         <div id="cameraCapturedContainer" class="camera-captured-container" style="display: none;">
-          <span class="camera-captured-badge">점선 영역 추출 완료</span>
+          <span class="camera-captured-badge">촬영 사진</span>
           <img id="capturedImagePreview" alt="촬영된 손글씨 사진 미리보기">
+          <!-- 마우스/터치 드래그 선택 오버레이 레이어 -->
+          <div id="cameraRegionLayer" class="region-select-layer" title="마우스 또는 터치로 드래그하여 인식할 영역을 지정하세요">
+            <div id="cameraRegionBox" class="region-box" style="display: none;">
+              <span class="region-tag">인식 영역</span>
+              <div class="region-corner tl"></div>
+              <div class="region-corner tr"></div>
+              <div class="region-corner bl"></div>
+              <div class="region-corner br"></div>
+            </div>
+          </div>
           <div class="camera-captured-actions">
+            <button id="cameraResetRegionBtn" class="btn-secondary" style="display: none;" title="지정한 영역 선택 해제">영역 초기화</button>
             <button id="retakePhotoBtn" class="btn-secondary" title="사진 다시 찍기">다시 촬영</button>
           </div>
         </div>
+        <p id="cameraRegionHint" class="region-guide-hint" style="display: none;">
+          사진 위를 마우스나 터치로 드래그하면 특정 영역만 잘라서 인식할 수 있습니다.
+        </p>
 
         <!-- 카메라 조작 툴바 -->
         <div id="cameraToolbar" class="camera-toolbar">
@@ -182,8 +196,24 @@
       <!-- Uploaded Image Preview Area -->
       <div id="uploadPreviewWrapper" class="upload-preview-wrapper">
         <img id="imagePreview" alt="업로드된 손글씨 이미지 미리보기">
-        <button id="removeImageBtn" class="remove-image-btn" title="이미지 삭제">삭제</button>
+        <!-- 마우스/터치 드래그 선택 오버레이 레이어 -->
+        <div id="uploadRegionLayer" class="region-select-layer" title="마우스 또는 터치로 드래그하여 인식할 영역을 지정하세요">
+          <div id="uploadRegionBox" class="region-box" style="display: none;">
+            <span class="region-tag">인식 영역</span>
+            <div class="region-corner tl"></div>
+            <div class="region-corner tr"></div>
+            <div class="region-corner bl"></div>
+            <div class="region-corner br"></div>
+          </div>
+        </div>
+        <div class="upload-preview-actions">
+          <button id="uploadResetRegionBtn" class="btn-secondary" style="display: none;" title="지정한 영역 선택 해제">영역 초기화</button>
+          <button id="removeImageBtn" class="remove-image-btn" title="이미지 삭제">삭제</button>
+        </div>
       </div>
+      <p id="uploadRegionHint" class="region-guide-hint" style="display: none;">
+        이미지 위를 마우스나 터치로 드래그하면 특정 영역만 잘라서 인식할 수 있습니다.
+      </p>
 
       <!-- Recognition Trigger Button (캔버스 바로 아래 전진 배치 - 스크롤 없이 즉시 클릭 가능) -->
       <button id="recognizeBtn" class="btn-primary-action" aria-label="손글씨 인식 시작">

@@ -11,6 +11,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const uploadPreviewWrapper = document.getElementById('uploadPreviewWrapper');
   const imagePreview = document.getElementById('imagePreview');
   const removeImageBtn = document.getElementById('removeImageBtn');
+  const uploadRegionLayer = document.getElementById('uploadRegionLayer');
+  const uploadRegionBox = document.getElementById('uploadRegionBox');
+  const uploadResetRegionBtn = document.getElementById('uploadResetRegionBtn');
+  const uploadRegionHint = document.getElementById('uploadRegionHint');
 
   const tabDraw = document.getElementById('tabDraw');
   const tabCamera = document.getElementById('tabCamera');
@@ -30,6 +34,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const capturePhotoBtn = document.getElementById('capturePhotoBtn');
   const nativeCameraBtn = document.getElementById('nativeCameraBtn');
   const cameraFileInput = document.getElementById('cameraFileInput');
+  const cameraRegionLayer = document.getElementById('cameraRegionLayer');
+  const cameraRegionBox = document.getElementById('cameraRegionBox');
+  const cameraResetRegionBtn = document.getElementById('cameraResetRegionBtn');
+  const cameraRegionHint = document.getElementById('cameraRegionHint');
 
   // Scope & Mode Elements
   const scopeSingleBtn = document.getElementById('scopeSingleBtn');
@@ -274,9 +282,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       cameraViewWrapper.style.display = 'flex';
       if (!capturedPhotoSource) {
         startCameraStream();
+        if (cameraRegionHint) cameraRegionHint.style.display = 'none';
+      } else {
+        if (cameraRegionHint) cameraRegionHint.style.display = 'flex';
       }
     } else {
       cameraViewWrapper.style.display = 'none';
+      if (cameraRegionHint) cameraRegionHint.style.display = 'none';
       stopCameraStream();
     }
 
@@ -284,20 +296,247 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (tab === 'upload') {
       if (uploadedImageSource && currentTab !== 'camera') {
         uploadZone.style.display = 'none';
-        uploadPreviewWrapper.style.display = 'block';
+        uploadPreviewWrapper.style.display = 'flex';
+        if (uploadRegionHint) uploadRegionHint.style.display = 'flex';
       } else {
         uploadZone.style.display = 'flex';
         uploadPreviewWrapper.style.display = 'none';
+        if (uploadRegionHint) uploadRegionHint.style.display = 'none';
       }
     } else {
       uploadZone.style.display = 'none';
       uploadPreviewWrapper.style.display = 'none';
+      if (uploadRegionHint) uploadRegionHint.style.display = 'none';
     }
   }
 
   tabDraw.addEventListener('click', () => switchTab('draw'));
   tabCamera.addEventListener('click', () => switchTab('camera'));
   tabUpload.addEventListener('click', () => switchTab('upload'));
+
+  // ==========================================
+  // 마우스/터치 드래그 사각형 영역 선택기 (ROI Selector)
+  // ==========================================
+  function createRegionSelector({ layerEl, boxEl, resetBtnEl, hintEl, imgEl, label = '인식 영역' }) {
+    if (!layerEl || !boxEl) return null;
+
+    let isSelecting = false;
+    let startX = 0;
+    let startY = 0;
+    let currentRect = null; // { x, y, width, height }
+    let hasSelected = false;
+
+    function getLayerCoords(e) {
+      const bounds = layerEl.getBoundingClientRect();
+      let clientX = e.clientX;
+      let clientY = e.clientY;
+
+      if (e.touches && e.touches.length > 0) {
+        clientX = e.touches[0].clientX;
+        clientY = e.touches[0].clientY;
+      } else if (e.changedTouches && e.changedTouches.length > 0) {
+        clientX = e.changedTouches[0].clientX;
+        clientY = e.changedTouches[0].clientY;
+      }
+
+      const x = Math.max(0, Math.min(clientX - bounds.left, bounds.width));
+      const y = Math.max(0, Math.min(clientY - bounds.top, bounds.height));
+      return { x, y, width: bounds.width, height: bounds.height };
+    }
+
+    function onPointerStart(e) {
+      // 이미지가 준비되지 않은 경우 무시
+      if (!imgEl || !imgEl.getAttribute('src')) return;
+
+      if (e.cancelable && e.type === 'touchstart') {
+        e.preventDefault();
+      }
+
+      const coords = getLayerCoords(e);
+      isSelecting = true;
+      startX = coords.x;
+      startY = coords.y;
+      currentRect = { x: startX, y: startY, width: 0, height: 0 };
+
+      boxEl.style.left = `${startX}px`;
+      boxEl.style.top = `${startY}px`;
+      boxEl.style.width = '0px';
+      boxEl.style.height = '0px';
+      boxEl.style.display = 'block';
+    }
+
+    function onPointerMove(e) {
+      if (!isSelecting) return;
+      if (e.cancelable) {
+        e.preventDefault();
+      }
+
+      const coords = getLayerCoords(e);
+      const curX = coords.x;
+      const curY = coords.y;
+
+      const left = Math.min(startX, curX);
+      const top = Math.min(startY, curY);
+      const width = Math.abs(curX - startX);
+      const height = Math.abs(curY - startY);
+
+      currentRect = { x: left, y: top, width, height };
+
+      boxEl.style.left = `${left}px`;
+      boxEl.style.top = `${top}px`;
+      boxEl.style.width = `${width}px`;
+      boxEl.style.height = `${height}px`;
+    }
+
+    function onPointerEnd(e) {
+      if (!isSelecting) return;
+      isSelecting = false;
+
+      // 최소 15px 이상 드래그해야 유효한 영역으로 인정
+      if (currentRect && currentRect.width >= 15 && currentRect.height >= 15) {
+        hasSelected = true;
+        if (resetBtnEl) resetBtnEl.style.display = 'inline-flex';
+        showToast('선택한 영역만 잘라서 인식합니다.');
+      } else {
+        if (!hasSelected) {
+          reset();
+        } else if (currentRect) {
+          boxEl.style.left = `${currentRect.x}px`;
+          boxEl.style.top = `${currentRect.y}px`;
+          boxEl.style.width = `${currentRect.width}px`;
+          boxEl.style.height = `${currentRect.height}px`;
+        }
+      }
+    }
+
+    // 마우스 이벤트 바인딩
+    layerEl.addEventListener('mousedown', onPointerStart);
+    window.addEventListener('mousemove', onPointerMove);
+    window.addEventListener('mouseup', onPointerEnd);
+
+    // 터치 이벤트 바인딩
+    layerEl.addEventListener('touchstart', onPointerStart, { passive: false });
+    window.addEventListener('touchmove', onPointerMove, { passive: false });
+    window.addEventListener('touchend', onPointerEnd, { passive: false });
+    window.addEventListener('touchcancel', onPointerEnd, { passive: false });
+
+    if (resetBtnEl) {
+      resetBtnEl.addEventListener('click', (e) => {
+        e.stopPropagation();
+        reset();
+        showToast('영역 선택이 초기화되어 전체 이미지를 인식합니다.');
+      });
+    }
+
+    function reset() {
+      isSelecting = false;
+      hasSelected = false;
+      currentRect = null;
+      boxEl.style.display = 'none';
+      if (resetBtnEl) resetBtnEl.style.display = 'none';
+    }
+
+    function hasSelection() {
+      return hasSelected && currentRect && currentRect.width >= 15 && currentRect.height >= 15;
+    }
+
+    function getCroppedCanvas() {
+      if (!hasSelection() || !imgEl) return null;
+
+      const naturalW = imgEl.naturalWidth;
+      const naturalH = imgEl.naturalHeight;
+      const layerW = layerEl.clientWidth;
+      const layerH = layerEl.clientHeight;
+
+      if (!naturalW || !naturalH || !layerW || !layerH) return null;
+
+      const imgAspect = naturalW / naturalH;
+      const layerAspect = layerW / layerH;
+
+      let renderedW = layerW;
+      let renderedH = layerH;
+      let offsetX = 0;
+      let offsetY = 0;
+
+      if (imgAspect > layerAspect) {
+        renderedW = layerW;
+        renderedH = layerW / imgAspect;
+        offsetX = 0;
+        offsetY = (layerH - renderedH) / 2;
+      } else {
+        renderedH = layerH;
+        renderedW = layerH * imgAspect;
+        offsetX = (layerW - renderedW) / 2;
+        offsetY = 0;
+      }
+
+      const selX1 = currentRect.x;
+      const selY1 = currentRect.y;
+      const selX2 = currentRect.x + currentRect.width;
+      const selY2 = currentRect.y + currentRect.height;
+
+      const imgX1 = offsetX;
+      const imgY1 = offsetY;
+      const imgX2 = offsetX + renderedW;
+      const imgY2 = offsetY + renderedH;
+
+      const interX1 = Math.max(selX1, imgX1);
+      const interY1 = Math.max(selY1, imgY1);
+      const interX2 = Math.min(selX2, imgX2);
+      const interY2 = Math.min(selY2, imgY2);
+
+      const interW = interX2 - interX1;
+      const interH = interY2 - interY1;
+
+      if (interW <= 5 || interH <= 5) return null;
+
+      const scaleX = naturalW / renderedW;
+      const scaleY = naturalH / renderedH;
+
+      const cropX = Math.round((interX1 - offsetX) * scaleX);
+      const cropY = Math.round((interY1 - offsetY) * scaleY);
+      const cropW = Math.round(interW * scaleX);
+      const cropH = Math.round(interH * scaleY);
+
+      const safeX = Math.max(0, Math.min(cropX, naturalW - 1));
+      const safeY = Math.max(0, Math.min(cropY, naturalH - 1));
+      const safeW = Math.max(1, Math.min(cropW, naturalW - safeX));
+      const safeH = Math.max(1, Math.min(cropH, naturalH - safeY));
+
+      const cropCanvas = document.createElement('canvas');
+      cropCanvas.width = safeW;
+      cropCanvas.height = safeH;
+      const ctx = cropCanvas.getContext('2d');
+      ctx.drawImage(imgEl, safeX, safeY, safeW, safeH, 0, 0, safeW, safeH);
+      return cropCanvas;
+    }
+
+    return {
+      reset,
+      hasSelection,
+      getCroppedCanvas,
+      getRect: () => currentRect
+    };
+  }
+
+  // 선택기 인스턴스 초기화
+  const cameraRegionSelector = createRegionSelector({
+    layerEl: cameraRegionLayer,
+    boxEl: cameraRegionBox,
+    resetBtnEl: cameraResetRegionBtn,
+    hintEl: cameraRegionHint,
+    imgEl: capturedImagePreview,
+    label: '촬영 인식 영역'
+  });
+
+  const uploadRegionSelector = createRegionSelector({
+    layerEl: uploadRegionLayer,
+    boxEl: uploadRegionBox,
+    resetBtnEl: uploadResetRegionBtn,
+    hintEl: uploadRegionHint,
+    imgEl: imagePreview,
+    label: '업로드 인식 영역'
+  });
 
   // ==========================================
   // 카메라 사진 촬영 기능 로직
@@ -432,7 +671,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     capturePhotoBtn.style.display = 'none';
 
     stopCameraStream();
-    showToast('점선 영역만 썸네일로 추출되었습니다! [지금 인식하기]를 눌러보세요.');
+    cameraRegionSelector?.reset();
+    if (cameraRegionHint) cameraRegionHint.style.display = 'flex';
+    showToast('사진이 준비되었습니다. 필요시 마우스/터치로 원하는 글자 영역을 드래그하세요.');
   }
 
   function retakePhoto() {
@@ -440,6 +681,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (currentTab === 'camera') {
       uploadedImageSource = null;
     }
+    cameraRegionSelector?.reset();
+    if (cameraRegionHint) cameraRegionHint.style.display = 'none';
     cameraCapturedContainer.style.display = 'none';
     cameraStreamContainer.style.display = 'flex';
     capturePhotoBtn.style.display = 'inline-flex';
@@ -485,7 +728,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         cameraCapturedContainer.style.display = 'flex';
         capturePhotoBtn.style.display = 'none';
         stopCameraStream();
-        showToast('점선 영역만 썸네일로 추출되었습니다! [지금 인식하기]를 눌러보세요.');
+        cameraRegionSelector?.reset();
+        if (cameraRegionHint) cameraRegionHint.style.display = 'flex';
+        showToast('사진이 준비되었습니다. 필요시 마우스/터치로 원하는 글자 영역을 드래그하세요.');
       };
       img.src = e.target.result;
     };
@@ -584,9 +829,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     reader.onload = (e) => {
       uploadedImageSource = e.target.result;
       imagePreview.src = uploadedImageSource;
+      uploadRegionSelector?.reset();
       uploadZone.style.display = 'none';
-      uploadPreviewWrapper.style.display = 'block';
-      showToast('이미지가 업로드되었습니다.');
+      uploadPreviewWrapper.style.display = 'flex';
+      if (uploadRegionHint) uploadRegionHint.style.display = 'flex';
+      showToast('이미지가 준비되었습니다. 필요시 마우스/터치로 원하는 글자 영역을 드래그하세요.');
     };
     reader.readAsDataURL(file);
   }
@@ -595,6 +842,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     uploadedImageSource = null;
     fileInput.value = '';
     imagePreview.src = '';
+    uploadRegionSelector?.reset();
+    if (uploadRegionHint) uploadRegionHint.style.display = 'none';
     uploadPreviewWrapper.style.display = 'none';
     uploadZone.style.display = 'flex';
   });
@@ -650,36 +899,58 @@ document.addEventListener('DOMContentLoaded', async () => {
         showToast('손글씨 사진을 먼저 촬영해 주세요!');
         return;
       }
-      sourceToRecognize = capturedPhotoSource;
 
-      // 촬영된 사진 분석용 캔버스 생성
-      try {
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = capturedImagePreview.naturalWidth || 640;
-        tempCanvas.height = capturedImagePreview.naturalHeight || 480;
-        const tctx = tempCanvas.getContext('2d');
-        tctx.drawImage(capturedImagePreview, 0, 0);
-        canvasForAnalysis = tempCanvas;
-      } catch (e) {
-        console.warn('촬영 사진 캔버스 변환 생략:', e);
+      // 1. 사용자가 드래그로 지정한 영역이 있는 경우: 해당 영역만 정확하게 크롭
+      if (cameraRegionSelector && cameraRegionSelector.hasSelection()) {
+        const croppedCanvas = cameraRegionSelector.getCroppedCanvas();
+        if (croppedCanvas) {
+          canvasForAnalysis = croppedCanvas;
+          sourceToRecognize = croppedCanvas.toDataURL('image/png');
+        }
+      }
+
+      // 2. 지정된 영역이 없거나 크롭 실패 시: 전체 촬영 사진 사용
+      if (!canvasForAnalysis) {
+        sourceToRecognize = capturedPhotoSource;
+        try {
+          const tempCanvas = document.createElement('canvas');
+          tempCanvas.width = capturedImagePreview.naturalWidth || 640;
+          tempCanvas.height = capturedImagePreview.naturalHeight || 480;
+          const tctx = tempCanvas.getContext('2d');
+          tctx.drawImage(capturedImagePreview, 0, 0);
+          canvasForAnalysis = tempCanvas;
+        } catch (e) {
+          console.warn('촬영 사진 캔버스 변환 생략:', e);
+        }
       }
     } else {
       if (!uploadedImageSource) {
         showToast('인식할 손글씨 이미지를 먼저 올려주세요!');
         return;
       }
-      sourceToRecognize = uploadedImageSource;
 
-      // 업로드 이미지 분석용 캔버스 생성
-      try {
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = imagePreview.naturalWidth || 300;
-        tempCanvas.height = imagePreview.naturalHeight || 300;
-        const tctx = tempCanvas.getContext('2d');
-        tctx.drawImage(imagePreview, 0, 0);
-        canvasForAnalysis = tempCanvas;
-      } catch (e) {
-        console.warn('업로드 이미지 캔버스 변환 생략:', e);
+      // 1. 사용자가 드래그로 지정한 영역이 있는 경우: 해당 영역만 정확하게 크롭
+      if (uploadRegionSelector && uploadRegionSelector.hasSelection()) {
+        const croppedCanvas = uploadRegionSelector.getCroppedCanvas();
+        if (croppedCanvas) {
+          canvasForAnalysis = croppedCanvas;
+          sourceToRecognize = croppedCanvas.toDataURL('image/png');
+        }
+      }
+
+      // 2. 지정된 영역이 없거나 크롭 실패 시: 전체 업로드 이미지 사용
+      if (!canvasForAnalysis) {
+        sourceToRecognize = uploadedImageSource;
+        try {
+          const tempCanvas = document.createElement('canvas');
+          tempCanvas.width = imagePreview.naturalWidth || 300;
+          tempCanvas.height = imagePreview.naturalHeight || 300;
+          const tctx = tempCanvas.getContext('2d');
+          tctx.drawImage(imagePreview, 0, 0);
+          canvasForAnalysis = tempCanvas;
+        } catch (e) {
+          console.warn('업로드 이미지 캔버스 변환 생략:', e);
+        }
       }
     }
 
