@@ -18,9 +18,13 @@ class DrawingCanvas {
     // 점 보간을 위한 좌표 배열
     this.points = [];
     
-    // 실행 취소(Undo) 히스토리 스택
+    // 실행 취소(Undo) / 다시 실행(Redo) 히스토리 스택
     this.history = [];
-    this.maxHistory = 20;
+    this.redoHistory = [];
+    this.maxHistory = 25;
+
+    // 모바일 터치 스크롤 모드 ('draw' | 'scroll')
+    this.isScrollMode = false;
 
     // 초기화
     this.initCanvasSize();
@@ -54,26 +58,42 @@ class DrawingCanvas {
     window.addEventListener('orientationchange', onResize);
 
     // 마우스 이벤트
-    this.canvas.addEventListener('mousedown', (e) => this.startDrawing(e));
-    this.canvas.addEventListener('mousemove', (e) => this.draw(e));
+    this.canvas.addEventListener('mousedown', (e) => {
+      if (this.isScrollMode) return;
+      this.startDrawing(e);
+    });
+    this.canvas.addEventListener('mousemove', (e) => {
+      if (this.isScrollMode) return;
+      this.draw(e);
+    });
     window.addEventListener('mouseup', () => this.stopDrawing());
     this.canvas.addEventListener('mouseleave', () => this.stopDrawing());
 
-    // 모바일 터치 이벤트 (화면 스크롤 간섭 방지)
+    // 모바일 터치 이벤트:
+    // 스크롤 모드이거나 손가락이 2개 이상이면 브라우저 네이티브 화면 스크롤 허용!
     this.canvas.addEventListener('touchstart', (e) => {
+      if (this.isScrollMode || e.touches.length > 1) {
+        this.stopDrawing();
+        return; // preventDefault 안 함 -> 자유로운 화면 스크롤 가능!
+      }
       e.preventDefault();
       const touch = e.touches[0];
       this.startDrawing(touch);
     }, { passive: false });
 
     this.canvas.addEventListener('touchmove', (e) => {
+      if (this.isScrollMode || e.touches.length > 1) {
+        return; // 스크롤 진행
+      }
       e.preventDefault();
       const touch = e.touches[0];
       this.draw(touch);
     }, { passive: false });
 
     this.canvas.addEventListener('touchend', (e) => {
-      e.preventDefault();
+      if (this.isScrollMode || (e.touches && e.touches.length > 0)) {
+        return;
+      }
       this.stopDrawing();
     });
 
@@ -193,19 +213,44 @@ class DrawingCanvas {
       this.history.shift();
     }
     this.history.push(imgData);
+    this.redoHistory = []; // 새로운 입력 시 redo 스택 초기화
   }
 
   undo() {
     if (this.history.length > 1) {
-      this.history.pop();
+      const currentState = this.history.pop();
+      this.redoHistory.push(currentState);
       const prevState = this.history[this.history.length - 1];
       this.ctx.putImageData(prevState, 0, 0);
       return true;
     } else if (this.history.length === 1) {
+      const currentState = this.history.pop();
+      this.redoHistory.push(currentState);
       this.clearCanvas(false);
       return true;
     }
     return false;
+  }
+
+  redo() {
+    if (this.redoHistory.length > 0) {
+      const nextState = this.redoHistory.pop();
+      this.history.push(nextState);
+      this.ctx.putImageData(nextState, 0, 0);
+      return true;
+    }
+    return false;
+  }
+
+  toggleScrollMode(enabled) {
+    this.isScrollMode = enabled;
+    if (enabled) {
+      this.canvas.style.touchAction = 'pan-y'; // 화면 상하 스크롤 허용
+      this.canvas.style.cursor = 'grab';
+    } else {
+      this.canvas.style.touchAction = 'none'; // 필기 모드
+      this.canvas.style.cursor = 'crosshair';
+    }
   }
 
   clearCanvas(save = true) {

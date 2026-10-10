@@ -32,8 +32,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const strokeWidthSlider = document.getElementById('strokeWidth');
   const strokeWidthVal = document.getElementById('strokeWidthVal');
   const undoBtn = document.getElementById('undoBtn');
-  const clearBtn = document.getElementById('clearBtn');
+  const redoBtn = document.getElementById('redoBtn');
   const eraserBtn = document.getElementById('eraserBtn');
+  const clearBtn = document.getElementById('clearBtn');
+  const scrollModeBtn = document.getElementById('scrollModeBtn');
 
   const recognizeBtn = document.getElementById('recognizeBtn');
   const recognizeBtnText = document.getElementById('recognizeBtnText');
@@ -77,6 +79,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let uploadedImageSource = null;
   let recognitionHistory = JSON.parse(localStorage.getItem('handwriting_history') || '[]');
   let isEraserActive = false;
+  let isScrollMode = false;
 
   // 1. 초기 히스토리 렌더링
   renderHistory();
@@ -123,7 +126,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (minSizeGuideBox) minSizeGuideBox.style.display = 'block';
       if (sentenceGuideLines) sentenceGuideLines.style.display = 'none';
       if (canvasGuideHint) {
-        canvasGuideHint.innerHTML = '<span>📐 1개 문자 모드:</span> 캔버스 중앙 점선 상자보다 <strong>큼직하게 1글자</strong> 작성해 주세요';
+        canvasGuideHint.innerHTML = '<span>1개 문자 모드:</span> 캔버스 중앙 점선 상자보다 <strong>큼직하게 1글자</strong> 작성해 주세요';
       }
       // 1개 문자 최적 펜 굵기 복원
       if (strokeWidthSlider && parseInt(strokeWidthSlider.value, 10) < 18) {
@@ -131,12 +134,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (strokeWidthVal) strokeWidthVal.textContent = '22px';
         drawingCanvas.setStrokeWidth(22);
       }
-      showToast('🔤 [1개 문자 모드] 한 글자씩 딥러닝/OCR로 정밀 판독합니다.');
+      showToast('[1개 문자 모드] 한 글자씩 정밀 판독합니다.');
     } else {
       if (minSizeGuideBox) minSizeGuideBox.style.display = 'none';
       if (sentenceGuideLines) sentenceGuideLines.style.display = 'flex';
       if (canvasGuideHint) {
-        canvasGuideHint.innerHTML = '<span>📝 단어/문장 모드:</span> 가로 방향으로 <strong>단어나 문장</strong>을 자유롭게 이어서 작성해 주세요';
+        canvasGuideHint.innerHTML = '<span>단어/문장 모드:</span> 가로 방향으로 <strong>단어나 문장</strong>을 자유롭게 이어서 작성해 주세요';
       }
       // 연속 단어 필기 시 글자 뭉침 방지를 위해 알맞은 펜 굵기(14px)로 자동 최적화
       if (strokeWidthSlider && parseInt(strokeWidthSlider.value, 10) > 16) {
@@ -144,7 +147,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (strokeWidthVal) strokeWidthVal.textContent = '14px';
         drawingCanvas.setStrokeWidth(14);
       }
-      showToast('📝 [단어/문장 모드] 여러 글자나 문장을 가로로 이어서 인식합니다.');
+      showToast('[단어/문장 모드] 여러 글자나 문장을 가로로 이어서 인식합니다.');
     }
 
     updateStatusBadge();
@@ -179,7 +182,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     btn.addEventListener('click', () => {
       const val = parseInt(btn.getAttribute('data-val'), 10);
       updateThresholdUI(val);
-      showToast(`🎯 인식 기준치가 ${val}%로 설정되었습니다.`);
+      showToast(`인식 기준치가 ${val}%로 설정되었습니다.`);
     });
   });
 
@@ -197,11 +200,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     recognizer.setMode(mode);
 
     if (mode === 'digits') {
-      showToast('🔢 [숫자] 모드: 0~9 손글씨에 최적화되었습니다.');
+      showToast('[숫자] 모드: 0~9 손글씨에 최적화되었습니다.');
     } else if (mode === 'letters') {
-      showToast('🔤 [영문] 모드: A~Z 알파벳에 최적화되었습니다.');
+      showToast('[영문] 모드: A~Z 알파벳에 최적화되었습니다.');
     } else {
-      showToast('🌐 [통합] 모드: 숫자와 영문을 함께 판별합니다.');
+      showToast('[통합] 모드: 숫자와 영문을 함께 판별합니다.');
     }
 
     updateStatusBadge();
@@ -246,7 +249,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   tabUpload.addEventListener('click', () => switchTab('upload'));
 
   // ==========================================
-  // 드로잉 도구 이벤트
+  // 드로잉 도구 이벤트 (Undo, Redo, 지우개, 비우기, 화면 이동)
   // ==========================================
   strokeWidthSlider.addEventListener('input', (e) => {
     const val = e.target.value;
@@ -254,57 +257,53 @@ document.addEventListener('DOMContentLoaded', async () => {
     drawingCanvas.setStrokeWidth(val);
   });
 
-  undoBtn.addEventListener('click', () => {
-    drawingCanvas.undo();
+  undoBtn?.addEventListener('click', () => {
+    const ok = drawingCanvas.undo();
+    if (ok) {
+      showToast('이전 획을 취소했습니다.');
+    } else {
+      showToast('더 이상 되돌릴 획이 없습니다.');
+    }
   });
 
-  clearBtn.addEventListener('click', () => {
+  redoBtn?.addEventListener('click', () => {
+    const ok = drawingCanvas.redo();
+    if (ok) {
+      showToast('취소한 획을 다시 실행했습니다.');
+    } else {
+      showToast('다시 실행할 획이 없습니다.');
+    }
+  });
+
+  clearBtn?.addEventListener('click', () => {
     drawingCanvas.clearCanvas(true);
+    showToast('캔버스를 모두 비웠습니다.');
   });
 
-  eraserBtn.addEventListener('click', () => {
+  eraserBtn?.addEventListener('click', () => {
     isEraserActive = !isEraserActive;
     drawingCanvas.toggleEraser(isEraserActive);
     if (isEraserActive) {
       eraserBtn.classList.add('active');
-      eraserBtn.innerHTML = '✏️ 펜 모드로 전환';
+      eraserBtn.textContent = '펜 쓰기';
     } else {
       eraserBtn.classList.remove('active');
-      eraserBtn.innerHTML = '🧹 지우개';
+      eraserBtn.textContent = '지우개';
     }
   });
 
-  // 샘플 글씨 칩 클릭
-  document.querySelectorAll('.chip-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const char = btn.getAttribute('data-char');
-      const reqScope = btn.getAttribute('data-scope');
-      switchTab('draw');
-
-      // 단어/문장 칩 여부에 따라 스코프 자동 전환
-      if (reqScope === 'sentence') {
-        setRecognitionScope('sentence');
-        if (/^[0-9\s]+$/.test(char)) {
-          setRecognitionMode('digits');
-        } else if (/^[A-Za-z\s]+$/.test(char)) {
-          setRecognitionMode('letters');
-        } else {
-          setRecognitionMode('all');
-        }
-      } else {
-        setRecognitionScope('single');
-        if (currentMode !== 'all') {
-          if (/^[0-9]$/.test(char) && currentMode !== 'digits') {
-            setRecognitionMode('digits');
-          } else if (/^[A-Za-z]$/.test(char) && currentMode !== 'letters') {
-            setRecognitionMode('letters');
-          }
-        }
-      }
-
-      drawingCanvas.drawSample(char);
-      showToast(`'${char}' 예시 글씨를 캔버스에 그렸습니다.`);
-    });
+  scrollModeBtn?.addEventListener('click', () => {
+    isScrollMode = !isScrollMode;
+    drawingCanvas.toggleScrollMode(isScrollMode);
+    if (isScrollMode) {
+      scrollModeBtn.classList.add('active');
+      scrollModeBtn.textContent = '그리기 복귀';
+      showToast('화면 이동 모드: 캔버스를 터치하여 화면을 스크롤할 수 있습니다.');
+    } else {
+      scrollModeBtn.classList.remove('active');
+      scrollModeBtn.textContent = '화면 이동';
+      showToast('그리기 모드로 복귀했습니다.');
+    }
   });
 
   // ==========================================
@@ -568,7 +567,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           <span class="history-char">${item.text}</span>
           <span class="history-meta">${item.time} (${item.confidence}%)</span>
         </div>
-        <button class="history-copy" title="복사" data-copy="${item.text}">📋</button>
+        <button class="history-copy" title="복사" data-copy="${item.text}">복사</button>
       `;
       historyList.appendChild(el);
     });
@@ -607,7 +606,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ==========================================
   const savedTheme = localStorage.getItem('app_theme') || 'light';
   document.documentElement.setAttribute('data-theme', savedTheme);
-  themeToggleBtn.innerHTML = savedTheme === 'light' ? '🌙' : '☀️';
+  themeToggleBtn.textContent = savedTheme === 'light' ? '다크 모드' : '라이트 모드';
   themeToggleBtn.title = savedTheme === 'light' ? '다크 모드로 전환' : '라이트 모드로 전환';
 
   themeToggleBtn.addEventListener('click', () => {
@@ -615,7 +614,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const next = current === 'light' ? 'dark' : 'light';
     document.documentElement.setAttribute('data-theme', next);
     localStorage.setItem('app_theme', next);
-    themeToggleBtn.innerHTML = next === 'light' ? '🌙' : '☀️';
+    themeToggleBtn.textContent = next === 'light' ? '다크 모드' : '라이트 모드';
     themeToggleBtn.title = next === 'light' ? '다크 모드로 전환' : '라이트 모드로 전환';
     showToast(`${next === 'light' ? '라이트' : '다크'} 모드로 변경되었습니다.`);
   });
