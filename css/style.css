@@ -660,7 +660,155 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  font-size: 0.78rem;
+  transition: all var(--transition-fast);
+}
+
+.remove-image-btn:hover {
+  background: var(--accent-danger);
+  transform: scale(1.1);
+}
+
+/* ========================================================
+   Camera View Styles (사진 촬영 뷰파인더 & 조작 컨트롤)
+   ======================================================== */
+.camera-view-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.camera-stream-container {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 0.75;
+  background: #000000;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-glass);
+  box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.4);
+}
+
+#cameraVideo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.camera-guide-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.camera-guide-box {
+  width: 78%;
+  height: 72%;
+  border: 2px dashed rgba(255, 255, 255, 0.75);
+  border-radius: var(--radius-md);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.28);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 0.75rem;
+}
+
+.camera-guide-label {
+  background: rgba(0, 0, 0, 0.65);
+  color: #ffffff;
+  font-size: 0.76rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: var(--radius-full);
+  letter-spacing: -0.01em;
+  backdrop-filter: blur(4px);
+}
+
+.camera-switch-btn {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+  padding: 0.4rem 0.75rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
   backdrop-filter: blur(8px);
+  transition: all var(--transition-fast);
+  z-index: 10;
+}
+
+.camera-switch-btn:hover {
+  background: rgba(0, 0, 0, 0.85);
+  border-color: #ffffff;
+}
+
+.camera-captured-container {
+  width: 100%;
+  aspect-ratio: 1 / 0.75;
+  background: #000000;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  position: relative;
+  border: 1px solid var(--border-glass);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#capturedImagePreview {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #0a0a0c;
+}
+
+.camera-captured-actions {
+  position: absolute;
+  bottom: 0.75rem;
+  right: 0.75rem;
+  z-index: 10;
+}
+
+.camera-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.btn-capture-action {
+  flex: 1;
+  max-width: 220px;
+  min-height: 44px;
+  background: var(--accent-gradient);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: #ffffff;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
+  transition: all var(--transition-fast);
+}
+
+.btn-capture-action:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
 }
 
 /* Main Action Button (캔버스 바로 아래 위치) */

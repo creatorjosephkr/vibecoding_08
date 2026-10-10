@@ -47,8 +47,11 @@
         <button id="tabDraw" class="tab-btn active" role="tab" aria-selected="true">
           직접 그리기
         </button>
+        <button id="tabCamera" class="tab-btn" role="tab" aria-selected="false">
+          사진 촬영
+        </button>
         <button id="tabUpload" class="tab-btn" role="tab" aria-selected="false">
-          이미지 파일 업로드
+          파일 업로드
         </button>
       </nav>
 
@@ -128,6 +131,43 @@
       <p id="canvasGuideHint" class="canvas-guide-hint">
         점선 상자보다 큼직하게 1글자를 작성해 주세요.
       </p>
+
+      <!-- Camera View: Live Viewfinder & Capture -->
+      <div id="cameraViewWrapper" class="camera-view-wrapper" style="display: none;">
+        <!-- 실시간 비디오 스트림 영역 -->
+        <div id="cameraStreamContainer" class="camera-stream-container">
+          <video id="cameraVideo" autoplay playsinline muted></video>
+          <!-- 뷰파인더 가이드라인 오버레이 -->
+          <div class="camera-guide-overlay">
+            <div class="camera-guide-box">
+              <span class="camera-guide-label">손글씨를 이 영역 안에 맞춰주세요</span>
+            </div>
+          </div>
+          <!-- 카메라 전환 버튼 (전면/후면) -->
+          <button id="switchCameraBtn" class="camera-switch-btn" title="카메라 전환" aria-label="카메라 전환">
+            카메라 전환
+          </button>
+        </div>
+
+        <!-- 촬영된 사진 미리보기 영역 -->
+        <div id="cameraCapturedContainer" class="camera-captured-container" style="display: none;">
+          <img id="capturedImagePreview" alt="촬영된 손글씨 사진 미리보기">
+          <div class="camera-captured-actions">
+            <button id="retakePhotoBtn" class="btn-secondary" title="사진 다시 찍기">다시 촬영</button>
+          </div>
+        </div>
+
+        <!-- 카메라 조작 툴바 -->
+        <div id="cameraToolbar" class="camera-toolbar">
+          <button id="capturePhotoBtn" class="btn-capture-action" aria-label="사진 촬영하기">
+            촬영하기
+          </button>
+          <button id="nativeCameraBtn" class="btn-secondary" title="기기 기본 카메라 앱으로 촬영">
+            기기 카메라 열기
+          </button>
+          <input type="file" id="cameraFileInput" accept="image/*" capture="environment" style="display: none;">
+        </div>
+      </div>
 
       <!-- Upload View: Dropzone -->
       <div id="uploadZone" class="upload-zone">

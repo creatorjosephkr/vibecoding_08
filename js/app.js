@@ -13,10 +13,23 @@ document.addEventListener('DOMContentLoaded', async () => {
   const removeImageBtn = document.getElementById('removeImageBtn');
 
   const tabDraw = document.getElementById('tabDraw');
+  const tabCamera = document.getElementById('tabCamera');
   const tabUpload = document.getElementById('tabUpload');
   const canvasWrapper = document.getElementById('canvasWrapper');
   const canvasToolbar = document.getElementById('canvasToolbar');
   const canvasGuideHint = document.getElementById('canvasGuideHint');
+
+  // Camera Elements
+  const cameraViewWrapper = document.getElementById('cameraViewWrapper');
+  const cameraStreamContainer = document.getElementById('cameraStreamContainer');
+  const cameraVideo = document.getElementById('cameraVideo');
+  const switchCameraBtn = document.getElementById('switchCameraBtn');
+  const cameraCapturedContainer = document.getElementById('cameraCapturedContainer');
+  const capturedImagePreview = document.getElementById('capturedImagePreview');
+  const retakePhotoBtn = document.getElementById('retakePhotoBtn');
+  const capturePhotoBtn = document.getElementById('capturePhotoBtn');
+  const nativeCameraBtn = document.getElementById('nativeCameraBtn');
+  const cameraFileInput = document.getElementById('cameraFileInput');
 
   // Scope & Mode Elements
   const scopeSingleBtn = document.getElementById('scopeSingleBtn');
@@ -81,7 +94,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const recognizer = new HandwritingRecognizer();
 
   // App State
-  let currentTab = 'draw'; // 'draw' | 'upload'
+  let currentTab = 'draw'; // 'draw' | 'camera' | 'upload'
+  let cameraStream = null;
+  let currentFacingMode = 'environment';
+  let capturedPhotoSource = null;
   let currentScope = 'single'; // 'single': 1개 문자 | 'sentence': 단어/문장
   let currentMode = 'digits'; // 'digits' | 'letters' | 'all'
   let currentEngine = 'google'; // 'google': 획 궤적 초고정밀 | 'local': Tesseract+CNN
@@ -233,38 +249,177 @@ document.addEventListener('DOMContentLoaded', async () => {
   engineLocalBtn?.addEventListener('click', () => setEngine('local'));
 
   // ==========================================
-  // 탭 전환 로직
+  // 탭 전환 로직 (직접 그리기 / 사진 촬영 / 파일 업로드)
   // ==========================================
   function switchTab(tab) {
     currentTab = tab;
+    tabDraw.classList.toggle('active', tab === 'draw');
+    tabCamera.classList.toggle('active', tab === 'camera');
+    tabUpload.classList.toggle('active', tab === 'upload');
+
+    // 1. 직접 그리기 (Canvas)
     if (tab === 'draw') {
-      tabDraw.classList.add('active');
-      tabUpload.classList.remove('active');
       canvasWrapper.style.display = 'flex';
       canvasToolbar.style.display = 'flex';
       if (canvasGuideHint) canvasGuideHint.style.display = 'flex';
-      uploadZone.style.display = 'none';
-      uploadPreviewWrapper.style.display = 'none';
       setTimeout(() => drawingCanvas.handleResize(), 30);
     } else {
-      tabUpload.classList.add('active');
-      tabDraw.classList.remove('active');
       canvasWrapper.style.display = 'none';
       canvasToolbar.style.display = 'none';
       if (canvasGuideHint) canvasGuideHint.style.display = 'none';
+    }
 
-      if (uploadedImageSource) {
+    // 2. 사진 촬영 (Camera)
+    if (tab === 'camera') {
+      cameraViewWrapper.style.display = 'flex';
+      if (!capturedPhotoSource) {
+        startCameraStream();
+      }
+    } else {
+      cameraViewWrapper.style.display = 'none';
+      stopCameraStream();
+    }
+
+    // 3. 파일 업로드 (Upload)
+    if (tab === 'upload') {
+      if (uploadedImageSource && currentTab !== 'camera') {
         uploadZone.style.display = 'none';
         uploadPreviewWrapper.style.display = 'block';
       } else {
         uploadZone.style.display = 'flex';
         uploadPreviewWrapper.style.display = 'none';
       }
+    } else {
+      uploadZone.style.display = 'none';
+      uploadPreviewWrapper.style.display = 'none';
     }
   }
 
   tabDraw.addEventListener('click', () => switchTab('draw'));
+  tabCamera.addEventListener('click', () => switchTab('camera'));
   tabUpload.addEventListener('click', () => switchTab('upload'));
+
+  // ==========================================
+  // 카메라 사진 촬영 기능 로직
+  // ==========================================
+  async function startCameraStream() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showToast('브라우저 카메라 스트림이 지원되지 않습니다. [기기 카메라 열기]를 이용해 주세요.');
+      return;
+    }
+
+    stopCameraStream();
+
+    try {
+      const constraints = {
+        video: {
+          facingMode: currentFacingMode,
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
+        },
+        audio: false
+      };
+
+      cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
+      if (cameraVideo) {
+        cameraVideo.srcObject = cameraStream;
+        await cameraVideo.play();
+      }
+
+      cameraStreamContainer.style.display = 'flex';
+      cameraCapturedContainer.style.display = 'none';
+      capturePhotoBtn.style.display = 'inline-flex';
+    } catch (err) {
+      console.warn('카메라 스트림 시작 오류:', err);
+      showToast('카메라 접근 권한이 필요합니다. [기기 카메라 열기] 버튼을 눌러보세요.');
+    }
+  }
+
+  function stopCameraStream() {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(track => track.stop());
+      cameraStream = null;
+    }
+    if (cameraVideo) {
+      cameraVideo.srcObject = null;
+    }
+  }
+
+  function capturePhoto() {
+    if (!cameraVideo || !cameraStream) {
+      showToast('카메라 뷰파인더가 준비되지 않았습니다.');
+      return;
+    }
+
+    const videoW = cameraVideo.videoWidth || 640;
+    const videoH = cameraVideo.videoHeight || 480;
+
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = videoW;
+    tempCanvas.height = videoH;
+    const ctx = tempCanvas.getContext('2d');
+    ctx.drawImage(cameraVideo, 0, 0, videoW, videoH);
+
+    const dataUrl = tempCanvas.toDataURL('image/png');
+    capturedPhotoSource = dataUrl;
+    uploadedImageSource = dataUrl;
+
+    capturedImagePreview.src = dataUrl;
+    cameraStreamContainer.style.display = 'none';
+    cameraCapturedContainer.style.display = 'flex';
+    capturePhotoBtn.style.display = 'none';
+
+    stopCameraStream();
+    showToast('사진이 촬영되었습니다! 아래 [지금 인식하기]를 눌러보세요.');
+  }
+
+  function retakePhoto() {
+    capturedPhotoSource = null;
+    if (currentTab === 'camera') {
+      uploadedImageSource = null;
+    }
+    cameraCapturedContainer.style.display = 'none';
+    cameraStreamContainer.style.display = 'flex';
+    capturePhotoBtn.style.display = 'inline-flex';
+    startCameraStream();
+  }
+
+  function switchCamera() {
+    currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
+    startCameraStream();
+    showToast(`${currentFacingMode === 'environment' ? '후면' : '전면'} 카메라로 전환되었습니다.`);
+  }
+
+  function handleCameraFile(file) {
+    if (!file.type.startsWith('image/')) {
+      alert('이미지 파일만 촬영/업로드할 수 있습니다.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target.result;
+      capturedPhotoSource = dataUrl;
+      uploadedImageSource = dataUrl;
+      capturedImagePreview.src = dataUrl;
+      cameraStreamContainer.style.display = 'none';
+      cameraCapturedContainer.style.display = 'flex';
+      capturePhotoBtn.style.display = 'none';
+      stopCameraStream();
+      showToast('사진 촬영이 완료되었습니다! 아래 [지금 인식하기]를 눌러보세요.');
+    };
+    reader.readAsDataURL(file);
+  }
+
+  capturePhotoBtn?.addEventListener('click', capturePhoto);
+  retakePhotoBtn?.addEventListener('click', retakePhoto);
+  switchCameraBtn?.addEventListener('click', switchCamera);
+  nativeCameraBtn?.addEventListener('click', () => cameraFileInput?.click());
+  cameraFileInput?.addEventListener('change', (e) => {
+    if (e.target.files && e.target.files[0]) {
+      handleCameraFile(e.target.files[0]);
+    }
+  });
 
   // ==========================================
   // 드로잉 도구 이벤트 (Undo, Redo, 지우개, 비우기, 화면 이동)
@@ -409,6 +564,24 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       canvasForAnalysis = drawingCanvas.getPreprocessedCanvas(currentScope === 'sentence');
       sourceToRecognize = canvasForAnalysis.toDataURL('image/png');
+    } else if (currentTab === 'camera') {
+      if (!capturedPhotoSource) {
+        showToast('손글씨 사진을 먼저 촬영해 주세요!');
+        return;
+      }
+      sourceToRecognize = capturedPhotoSource;
+
+      // 촬영된 사진 분석용 캔버스 생성
+      try {
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = capturedImagePreview.naturalWidth || 640;
+        tempCanvas.height = capturedImagePreview.naturalHeight || 480;
+        const tctx = tempCanvas.getContext('2d');
+        tctx.drawImage(capturedImagePreview, 0, 0);
+        canvasForAnalysis = tempCanvas;
+      } catch (e) {
+        console.warn('촬영 사진 캔버스 변환 생략:', e);
+      }
     } else {
       if (!uploadedImageSource) {
         showToast('인식할 손글씨 이미지를 먼저 올려주세요!');
