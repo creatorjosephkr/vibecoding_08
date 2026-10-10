@@ -354,85 +354,85 @@ document.addEventListener('DOMContentLoaded', async () => {
     const videoW = cameraVideo.videoWidth || 640;
     const videoH = cameraVideo.videoHeight || 480;
 
-    // 1. 점선 가이드 박스(.camera-guide-box)의 뷰파인더 내 실제 표시 위치 계산
+    // 1. 현재 화면에 렌더링되고 있는 뷰파인더 컨테이너 크기
     const container = cameraStreamContainer;
     const guideBox = document.querySelector('.camera-guide-box');
 
-    let cropX = 0, cropY = 0, cropW = videoW, cropH = videoH;
+    const cW = (container && container.clientWidth) ? container.clientWidth : 400;
+    const cH = (container && container.clientHeight) ? container.clientHeight : 300;
 
+    // 2. object-fit: cover 역산:
+    // 화면에 실제로 보이고 있는 비디오 원본의 가시 영역(visible rect: srcX, srcY, srcW, srcH)
+    const cRatio = cW / cH;
+    const vRatio = videoW / videoH;
+
+    let srcX = 0, srcY = 0, srcW = videoW, srcH = videoH;
+
+    if (vRatio > cRatio) {
+      // 비디오가 더 가로로 길어서 좌우가 잘림 -> 가시 영역 너비는 videoH * cRatio
+      srcW = Math.round(videoH * cRatio);
+      srcX = Math.round((videoW - srcW) / 2);
+    } else {
+      // 비디오가 더 세로로 길어서 상하가 잘림 -> 가시 영역 높이는 videoW / cRatio
+      srcH = Math.round(videoW / cRatio);
+      srcY = Math.round((videoH - srcH) / 2);
+    }
+
+    // 3. 점선 가이드 박스 비율 (컨테이너 기준)
+    // CSS에 지정된 width: 72%, height: 56% 정중앙 영역
+    let relLeft = (1 - 0.72) / 2; // 0.14
+    let relTop = (1 - 0.56) / 2;  // 0.22
+    let relW = 0.72;
+    let relH = 0.56;
+
+    // DOM 실측이 가능하면 실측 비율 우선 반영
     if (container && guideBox) {
       const cRect = container.getBoundingClientRect();
       const gRect = guideBox.getBoundingClientRect();
-
-      const cW = cRect.width || 1;
-      const cH = cRect.height || 1;
-
-      // 비디오 태그의 object-fit: cover 스케일 및 오프셋 역산
-      const containerRatio = cW / cH;
-      const videoRatio = videoW / videoH;
-
-      let scale = 1;
-      let offsetX = 0;
-      let offsetY = 0;
-
-      if (videoRatio > containerRatio) {
-        // 비디오의 좌우 영역이 잘려 있는 상태
-        scale = videoH / cH;
-        const visibleW = cW * scale;
-        offsetX = (videoW - visibleW) / 2;
-        offsetY = 0;
-      } else {
-        // 비디오의 상하 영역이 잘려 있는 상태
-        scale = videoW / cW;
-        const visibleH = cH * scale;
-        offsetX = 0;
-        offsetY = (videoH - visibleH) / 2;
+      if (cRect.width > 0 && cRect.height > 0 && gRect.width > 0) {
+        relLeft = Math.max(0, (gRect.left - cRect.left) / cRect.width);
+        relTop = Math.max(0, (gRect.top - cRect.top) / cRect.height);
+        relW = Math.min(1 - relLeft, gRect.width / cRect.width);
+        relH = Math.min(1 - relTop, gRect.height / cRect.height);
       }
-
-      // 컨테이너 기준 가이드 박스의 상대적 위치
-      const relX = gRect.left - cRect.left;
-      const relY = gRect.top - cRect.top;
-      const relW = gRect.width;
-      const relH = gRect.height;
-
-      // 비디오 네이티브 해상도 좌표계로 정밀 매핑
-      cropX = Math.round(offsetX + relX * scale);
-      cropY = Math.round(offsetY + relY * scale);
-      cropW = Math.round(relW * scale);
-      cropH = Math.round(relH * scale);
-
-      // 경계값 클램핑
-      cropX = Math.max(0, Math.min(cropX, videoW - 10));
-      cropY = Math.max(0, Math.min(cropY, videoH - 10));
-      cropW = Math.max(10, Math.min(cropW, videoW - cropX));
-      cropH = Math.max(10, Math.min(cropH, videoH - cropY));
-    } else {
-      // 대체 비율 크롭 (중앙 가로 78% x 세로 72%)
-      cropW = Math.round(videoW * 0.78);
-      cropH = Math.round(videoH * 0.72);
-      cropX = Math.round((videoW - cropW) / 2);
-      cropY = Math.round((videoH - cropH) / 2);
     }
 
+    // 4. 비디오 원본에서 '점선 영역'에 해당하는 정확한 픽셀 좌표
+    let finalCropX = Math.round(srcX + srcW * relLeft);
+    let finalCropY = Math.round(srcY + srcH * relTop);
+    let finalCropW = Math.round(srcW * relW);
+    let finalCropH = Math.round(srcH * relH);
+
+    // 경계값 안전 클램핑
+    finalCropX = Math.max(0, Math.min(finalCropX, videoW - 10));
+    finalCropY = Math.max(0, Math.min(finalCropY, videoH - 10));
+    finalCropW = Math.max(10, Math.min(finalCropW, videoW - finalCropX));
+    finalCropH = Math.max(10, Math.min(finalCropH, videoH - finalCropY));
+
+    // 5. 점선 영역만 최종 캔버스에 1:1로 추출
     const cropCanvas = document.createElement('canvas');
-    cropCanvas.width = cropW;
-    cropCanvas.height = cropH;
+    cropCanvas.width = finalCropW;
+    cropCanvas.height = finalCropH;
     const ctx = cropCanvas.getContext('2d');
 
-    // 점선 영역만 크롭하여 드로잉
-    ctx.drawImage(cameraVideo, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+    ctx.drawImage(
+      cameraVideo,
+      finalCropX, finalCropY, finalCropW, finalCropH,
+      0, 0, finalCropW, finalCropH
+    );
 
     const dataUrl = cropCanvas.toDataURL('image/png');
     capturedPhotoSource = dataUrl;
     uploadedImageSource = dataUrl;
 
+    // 6. 썸네일 표시: 점선 영역만 크롭된 이미지가 썸네일에 100% 깔끔하게 들어감!
     capturedImagePreview.src = dataUrl;
     cameraStreamContainer.style.display = 'none';
     cameraCapturedContainer.style.display = 'flex';
     capturePhotoBtn.style.display = 'none';
 
     stopCameraStream();
-    showToast('점선 영역만 잘라서 촬영했습니다! [지금 인식하기]를 눌러보세요.');
+    showToast('점선 영역만 썸네일로 추출되었습니다! [지금 인식하기]를 눌러보세요.');
   }
 
   function retakePhoto() {
@@ -465,9 +465,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         const origW = img.naturalWidth || img.width;
         const origH = img.naturalHeight || img.height;
 
-        // 점선 가이드 영역 비율(중앙 78% x 72%)로 자동 크롭
-        const cropW = Math.round(origW * 0.78);
-        const cropH = Math.round(origH * 0.72);
+        // 점선 가이드 영역 비율(가로 72% x 세로 56%)로 정확히 크롭
+        const cropW = Math.round(origW * 0.72);
+        const cropH = Math.round(origH * 0.56);
         const cropX = Math.round((origW - cropW) / 2);
         const cropY = Math.round((origH - cropH) / 2);
 
@@ -485,7 +485,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         cameraCapturedContainer.style.display = 'flex';
         capturePhotoBtn.style.display = 'none';
         stopCameraStream();
-        showToast('점선 영역만 잘라서 저장되었습니다! [지금 인식하기]를 눌러보세요.');
+        showToast('점선 영역만 썸네일로 추출되었습니다! [지금 인식하기]를 눌러보세요.');
       };
       img.src = e.target.result;
     };
