@@ -35,7 +35,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   const redoBtn = document.getElementById('redoBtn');
   const eraserBtn = document.getElementById('eraserBtn');
   const clearBtn = document.getElementById('clearBtn');
-  const scrollModeBtn = document.getElementById('scrollModeBtn');
 
   const recognizeBtn = document.getElementById('recognizeBtn');
   const recognizeBtnText = document.getElementById('recognizeBtnText');
@@ -79,7 +78,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   let uploadedImageSource = null;
   let recognitionHistory = JSON.parse(localStorage.getItem('handwriting_history') || '[]');
   let isEraserActive = false;
-  let isScrollMode = false;
 
   // 1. 초기 히스토리 렌더링
   renderHistory();
@@ -126,7 +124,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (minSizeGuideBox) minSizeGuideBox.style.display = 'block';
       if (sentenceGuideLines) sentenceGuideLines.style.display = 'none';
       if (canvasGuideHint) {
-        canvasGuideHint.innerHTML = '<span>1개 문자 모드:</span> 캔버스 중앙 점선 상자보다 <strong>큼직하게 1글자</strong> 작성해 주세요';
+        canvasGuideHint.textContent = '점선 상자보다 큼직하게 1글자를 작성해 주세요.';
       }
       // 1개 문자 최적 펜 굵기 복원
       if (strokeWidthSlider && parseInt(strokeWidthSlider.value, 10) < 18) {
@@ -139,7 +137,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (minSizeGuideBox) minSizeGuideBox.style.display = 'none';
       if (sentenceGuideLines) sentenceGuideLines.style.display = 'flex';
       if (canvasGuideHint) {
-        canvasGuideHint.innerHTML = '<span>단어/문장 모드:</span> 가로 방향으로 <strong>단어나 문장</strong>을 자유롭게 이어서 작성해 주세요';
+        canvasGuideHint.textContent = '가로 방향으로 단어나 문장을 이어서 작성해 주세요.';
       }
       // 연속 단어 필기 시 글자 뭉침 방지를 위해 알맞은 펜 굵기(14px)로 자동 최적화
       if (strokeWidthSlider && parseInt(strokeWidthSlider.value, 10) > 16) {
@@ -289,20 +287,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else {
       eraserBtn.classList.remove('active');
       eraserBtn.textContent = '지우개';
-    }
-  });
-
-  scrollModeBtn?.addEventListener('click', () => {
-    isScrollMode = !isScrollMode;
-    drawingCanvas.toggleScrollMode(isScrollMode);
-    if (isScrollMode) {
-      scrollModeBtn.classList.add('active');
-      scrollModeBtn.textContent = '그리기 복귀';
-      showToast('화면 이동 모드: 캔버스를 터치하여 화면을 스크롤할 수 있습니다.');
-    } else {
-      scrollModeBtn.classList.remove('active');
-      scrollModeBtn.textContent = '화면 이동';
-      showToast('그리기 모드로 복귀했습니다.');
     }
   });
 
