@@ -142,8 +142,18 @@
           <input type="range" id="strokeWidth" class="range-slider" min="8" max="36" value="22">
         </div>
         <div class="tool-group tool-actions">
-          <button id="undoBtn" class="btn-secondary" title="실행 취소">되돌리기</button>
-          <button id="redoBtn" class="btn-secondary" title="다시 실행">다시 실행</button>
+          <button id="undoBtn" class="btn-secondary btn-icon-only" title="실행 취소 (되돌리기)" aria-label="실행 취소">
+            <svg class="tool-svg-icon" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M9 14L4 9l5-5"/>
+              <path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v1.5"/>
+            </svg>
+          </button>
+          <button id="redoBtn" class="btn-secondary btn-icon-only" title="다시 실행" aria-label="다시 실행">
+            <svg class="tool-svg-icon" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M15 14l5-5-5-5"/>
+              <path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5v1.5"/>
+            </svg>
+          </button>
           <button id="eraserBtn" class="btn-secondary" title="지우개 모드">지우개</button>
           <button id="clearBtn" class="btn-secondary" title="전체 지우기">비우기</button>
           <button id="scrollModeBtn" class="btn-secondary" title="화면 상하 스크롤 이동 모드">화면 이동</button>

@@ -554,6 +554,27 @@ body {
   flex-wrap: wrap;
 }
 
+.btn-icon-only {
+  padding: 0.55rem 0.65rem;
+  justify-content: center;
+  min-width: 38px;
+}
+
+.tool-svg-icon {
+  display: block;
+  flex-shrink: 0;
+  pointer-events: none;
+  transition: transform var(--transition-fast);
+}
+
+.btn-icon-only:hover .tool-svg-icon {
+  transform: scale(1.15);
+}
+
+.btn-icon-only:active .tool-svg-icon {
+  transform: scale(0.92);
+}
+
 /* Upload Zone */
 .upload-zone {
   display: none;
@@ -1366,6 +1387,11 @@ body {
     justify-content: center;
     font-size: 0.82rem;
     padding: 0.45rem 0.5rem;
+  }
+
+  .canvas-toolbar .btn-secondary.btn-icon-only {
+    flex: 0 0 42px;
+    padding: 0.45rem;
   }
 
   /* 메인 실행 버튼: 모바일에서 엄지 터치 최적화 */
