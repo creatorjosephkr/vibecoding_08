@@ -29,6 +29,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const modeAllBtn = document.getElementById('modeAllBtn');
   const modeButtons = [modeDigitsBtn, modeLettersBtn, modeAllBtn];
 
+  // Engine Elements
+  const engineGoogleBtn = document.getElementById('engineGoogleBtn');
+  const engineLocalBtn = document.getElementById('engineLocalBtn');
+
   const strokeWidthSlider = document.getElementById('strokeWidth');
   const strokeWidthVal = document.getElementById('strokeWidthVal');
   const undoBtn = document.getElementById('undoBtn');
@@ -64,6 +68,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   const modalRewriteBtn = document.getElementById('modalRewriteBtn');
   const modalProceedBtn = document.getElementById('modalProceedBtn');
 
+  // QR Code Modal Elements
+  const qrModalBtn = document.getElementById('qrModalBtn');
+  const qrModal = document.getElementById('qrModal');
+  const qrModalCloseBtn = document.getElementById('qrModalCloseBtn');
+  const qrModalCloseXBtn = document.getElementById('qrModalCloseXBtn');
+
   const themeToggleBtn = document.getElementById('themeToggleBtn');
 
   // Instances
@@ -74,6 +84,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let currentTab = 'draw'; // 'draw' | 'upload'
   let currentScope = 'single'; // 'single': 1개 문자 | 'sentence': 단어/문장
   let currentMode = 'digits'; // 'digits' | 'letters' | 'all'
+  let currentEngine = 'google'; // 'google': 획 궤적 초고정밀 | 'local': Tesseract+CNN
   let currentThreshold = parseInt(localStorage.getItem('handwriting_threshold') || '70', 10);
   let uploadedImageSource = null;
   let recognitionHistory = JSON.parse(localStorage.getItem('handwriting_history') || '[]');
@@ -90,9 +101,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       return;
     }
 
+    const engineLabel = currentEngine === 'google' ? 'Google AI' : '로컬 AI';
     const scopeLabel = currentScope === 'single' ? '1개 문자' : '단어/문장';
     const modeLabel = currentMode === 'digits' ? '숫자' : currentMode === 'letters' ? '영문' : '통합';
-    statusBadge.textContent = `준비 완료 (${scopeLabel} · ${modeLabel})`;
+    statusBadge.textContent = `준비 완료 (${engineLabel} · ${scopeLabel} · ${modeLabel})`;
     statusBadge.className = 'status-badge';
   }
 
@@ -126,24 +138,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (canvasGuideHint) {
         canvasGuideHint.textContent = '점선 상자보다 큼직하게 1글자를 작성해 주세요.';
       }
-      // 1개 문자 최적 펜 굵기 복원
-      if (strokeWidthSlider && parseInt(strokeWidthSlider.value, 10) < 18) {
-        strokeWidthSlider.value = 22;
-        if (strokeWidthVal) strokeWidthVal.textContent = '22px';
-        drawingCanvas.setStrokeWidth(22);
-      }
       showToast('[1개 문자 모드] 한 글자씩 정밀 판독합니다.');
     } else {
       if (minSizeGuideBox) minSizeGuideBox.style.display = 'none';
       if (sentenceGuideLines) sentenceGuideLines.style.display = 'flex';
       if (canvasGuideHint) {
         canvasGuideHint.textContent = '가로 방향으로 단어나 문장을 이어서 작성해 주세요.';
-      }
-      // 연속 단어 필기 시 글자 뭉침 방지를 위해 알맞은 펜 굵기(14px)로 자동 최적화
-      if (strokeWidthSlider && parseInt(strokeWidthSlider.value, 10) > 16) {
-        strokeWidthSlider.value = 14;
-        if (strokeWidthVal) strokeWidthVal.textContent = '14px';
-        drawingCanvas.setStrokeWidth(14);
       }
       showToast('[단어/문장 모드] 여러 글자나 문장을 가로로 이어서 인식합니다.');
     }
@@ -211,6 +211,26 @@ document.addEventListener('DOMContentLoaded', async () => {
   modeDigitsBtn?.addEventListener('click', () => setRecognitionMode('digits'));
   modeLettersBtn?.addEventListener('click', () => setRecognitionMode('letters'));
   modeAllBtn?.addEventListener('click', () => setRecognitionMode('all'));
+
+  // ==========================================
+  // AI 엔진 선택 (Google 손글씨 AI vs 로컬 AI)
+  // ==========================================
+  function setEngine(engine) {
+    currentEngine = engine;
+    if (engineGoogleBtn) engineGoogleBtn.classList.toggle('active', engine === 'google');
+    if (engineLocalBtn) engineLocalBtn.classList.toggle('active', engine === 'local');
+
+    if (engine === 'google') {
+      showToast('[Google AI 엔진] 획 궤적 기반 99% 초고정밀 손글씨 인식을 사용합니다.');
+    } else {
+      showToast('[로컬 AI 엔진] 브라우저 내 Tesseract OCR + MNIST CNN 앙상블을 사용합니다.');
+    }
+
+    updateStatusBadge();
+  }
+
+  engineGoogleBtn?.addEventListener('click', () => setEngine('google'));
+  engineLocalBtn?.addEventListener('click', () => setEngine('local'));
 
   // ==========================================
   // 탭 전환 로직
@@ -413,10 +433,35 @@ document.addEventListener('DOMContentLoaded', async () => {
     setRecognizingState(true);
 
     try {
-      const result = await recognizer.recognize(sourceToRecognize, canvasForAnalysis);
+      let result = null;
+
+      // 1. Google AI 엔진 선택 시: 캔버스 획 궤적(strokes) 기반 99% 초고정밀 인식
+      if (currentEngine === 'google' && currentTab === 'draw') {
+        const strokes = drawingCanvas.getStrokes();
+        if (strokes && strokes.length > 0) {
+          try {
+            result = await recognizer.recognizeWithGoogle(
+              strokes,
+              drawingCanvas.canvas.width,
+              drawingCanvas.canvas.height,
+              currentMode
+            );
+          } catch (gErr) {
+            console.warn('Google 손글씨 API 오류, 로컬 AI로 자동 폴백:', gErr);
+          }
+        }
+      }
+
+      // 2. Google AI 결과가 없거나(업로드 이미지 등) 로컬 AI 엔진 선택 시: 브라우저 앙상블 실행
+      if (!result) {
+        result = await recognizer.recognize(sourceToRecognize, canvasForAnalysis);
+        result.engine = 'local';
+      }
+
       displayResult(result);
       addToHistory(result.text, result.confidence);
-      showToast(`인식 결과: [ ${result.text} ]`);
+      const engineTag = result.engine === 'google' ? 'Google AI' : '로컬 AI';
+      showToast(`[${engineTag}] 인식 결과: [ ${result.text} ]`);
     } catch (err) {
       console.error(err);
       showToast('인식 중 오류가 발생했습니다. 다시 시도해 주세요.');
@@ -432,7 +477,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       recognizeBtnSpinner.style.display = 'inline-block';
       updateStatusBadge(true);
     } else {
-      recognizeBtnText.textContent = '⚡ 지금 인식하기';
+      recognizeBtnText.textContent = '지금 인식하기';
       recognizeBtnSpinner.style.display = 'none';
       updateStatusBadge(false);
     }
@@ -458,11 +503,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     confidenceBarFill.style.width = `${result.confidence}%`;
 
     // 기준치(Threshold) 충족 여부에 따른 UI 피드백
+    const engineName = result.engine === 'google' ? 'Google AI' : '로컬 AI';
     if (isPassed) {
       resultCharacter.classList.remove('dimmed');
       if (thresholdAlertBox) thresholdAlertBox.style.display = 'none';
       if (statusBadge) {
-        statusBadge.textContent = '인식 성공';
+        statusBadge.textContent = `${engineName} 인식 성공`;
         statusBadge.className = 'status-badge';
       }
     } else {
@@ -601,5 +647,32 @@ document.addEventListener('DOMContentLoaded', async () => {
     themeToggleBtn.textContent = next === 'light' ? '다크 모드' : '라이트 모드';
     themeToggleBtn.title = next === 'light' ? '다크 모드로 전환' : '라이트 모드로 전환';
     showToast(`${next === 'light' ? '라이트' : '다크'} 모드로 변경되었습니다.`);
+  });
+
+  // ==========================================
+  // 접속QR코드 보드 모달 제어
+  // ==========================================
+  function openQrModal() {
+    if (qrModal) qrModal.style.display = 'flex';
+  }
+
+  function closeQrModal() {
+    if (qrModal) qrModal.style.display = 'none';
+  }
+
+  qrModalBtn?.addEventListener('click', openQrModal);
+  qrModalCloseBtn?.addEventListener('click', closeQrModal);
+  qrModalCloseXBtn?.addEventListener('click', closeQrModal);
+
+  qrModal?.addEventListener('click', (e) => {
+    if (e.target === qrModal) {
+      closeQrModal();
+    }
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && qrModal && qrModal.style.display === 'flex') {
+      closeQrModal();
+    }
   });
 });

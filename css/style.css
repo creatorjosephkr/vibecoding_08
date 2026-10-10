@@ -1243,6 +1243,77 @@ body {
   border-color: rgba(255, 255, 255, 0.2);
 }
 
+/* QR Code Modal Styles (접속QR코드 보드 모달) */
+.qr-modal-card {
+  max-width: 360px;
+  text-align: center;
+}
+
+.qr-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.2rem;
+}
+
+.modal-close-x-btn {
+  background: transparent;
+  border: none;
+  font-size: 1.5rem;
+  line-height: 1;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0.2rem 0.4rem;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+}
+
+.modal-close-x-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+}
+
+.qr-modal-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.qr-image-container {
+  background: #ffffff;
+  padding: 0.9rem;
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.qr-svg-image {
+  width: 200px;
+  height: 200px;
+  display: block;
+}
+
+.qr-desc-text {
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-top: 0.25rem;
+}
+
+.qr-url-text {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  word-break: break-all;
+  background: var(--bg-secondary);
+  padding: 0.35rem 0.65rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-glass);
+}
+
 /* ========================================================
    Mobile & Responsive System (스마트폰 & 태블릿 최적화)
    ======================================================== */
@@ -1439,6 +1510,15 @@ body {
 
   .brand-text h1 {
     font-size: 1.15rem;
+  }
+
+  .header-actions {
+    gap: 0.4rem;
+  }
+
+  .theme-toggle-text-btn {
+    padding: 0.36rem 0.55rem;
+    font-size: 0.76rem;
   }
 
   .app-container {

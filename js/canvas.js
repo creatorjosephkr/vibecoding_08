@@ -11,7 +11,7 @@ class DrawingCanvas {
     // 드로잉 상태
     this.isDrawing = false;
     this.strokeColor = '#000000';
-    this.strokeWidth = 20; // 기본 펜 굵기 (CSS 픽셀 기준)
+    this.strokeWidth = 12; // 기본 펜 굵기 (CSS 픽셀 기준)
     this.isEraser = false;
     this.dpr = window.devicePixelRatio || 1;
     
@@ -22,6 +22,12 @@ class DrawingCanvas {
     this.history = [];
     this.redoHistory = [];
     this.maxHistory = 25;
+
+    // Google Handwriting 및 정밀 필기체 인식용 획 궤적(Strokes) 데이터
+    // [ { x: [x0, x1, ...], y: [y0, y1, ...], t: [t0, t1, ...] }, ... ]
+    this.strokes = [];
+    this.currentStroke = null;
+    this.strokeStartTime = 0;
 
     // 모바일 터치 스크롤 모드 ('draw' | 'scroll')
     this.isScrollMode = false;
@@ -146,6 +152,18 @@ class DrawingCanvas {
     const pos = this.getPointerPos(e);
     this.points = [pos];
 
+    // 지우개 모드가 아닐 때만 AI 획 궤적 수집
+    if (!this.isEraser) {
+      this.strokeStartTime = Date.now();
+      this.currentStroke = {
+        x: [Math.round(pos.x)],
+        y: [Math.round(pos.y)],
+        t: [0]
+      };
+    } else {
+      this.currentStroke = null;
+    }
+
     const currentLineWidth = (this.isEraser ? this.strokeWidth * 2.2 : this.strokeWidth) * this.dpr;
 
     this.ctx.beginPath();
@@ -165,6 +183,12 @@ class DrawingCanvas {
     if (!this.isDrawing) return;
     const pos = this.getPointerPos(e);
     this.points.push(pos);
+
+    if (this.currentStroke) {
+      this.currentStroke.x.push(Math.round(pos.x));
+      this.currentStroke.y.push(Math.round(pos.y));
+      this.currentStroke.t.push(Date.now() - this.strokeStartTime);
+    }
 
     const currentLineWidth = (this.isEraser ? this.strokeWidth * 2.2 : this.strokeWidth) * this.dpr;
     this.ctx.lineWidth = currentLineWidth;
@@ -203,6 +227,12 @@ class DrawingCanvas {
     if (this.isDrawing) {
       this.isDrawing = false;
       this.points = [];
+
+      if (this.currentStroke && this.currentStroke.x.length > 0) {
+        this.strokes.push(this.currentStroke);
+        this.currentStroke = null;
+      }
+
       this.saveState();
     }
   }
@@ -222,6 +252,7 @@ class DrawingCanvas {
       this.redoHistory.push(currentState);
       const prevState = this.history[this.history.length - 1];
       this.ctx.putImageData(prevState, 0, 0);
+      if (this.strokes.length > 0) this.strokes.pop();
       return true;
     } else if (this.history.length === 1) {
       const currentState = this.history.pop();
@@ -256,14 +287,20 @@ class DrawingCanvas {
   clearCanvas(save = true) {
     this.ctx.fillStyle = '#ffffff';
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    this.strokes = [];
+    this.currentStroke = null;
 
     if (save) {
       this.saveState();
     }
   }
 
+  getStrokes() {
+    return this.strokes;
+  }
+
   setStrokeWidth(val) {
-    this.strokeWidth = parseInt(val, 10) || 20;
+    this.strokeWidth = parseInt(val, 10) || 12;
   }
 
   toggleEraser(active) {
@@ -446,19 +483,26 @@ class DrawingCanvas {
       drawX, drawY, drawW, drawH
     );
 
-    // 명암 대비 이진화
+    // 명암 대비 보정 (가는 꼬리 획 및 안티에일리어싱 디테일 보존)
     const pData = pctx.getImageData(0, 0, 300, 300);
     const px = pData.data;
     for (let i = 0; i < px.length; i += 4) {
       const avg = (px[i] + px[i + 1] + px[i + 2]) / 3;
-      if (avg < 205) {
+      if (avg <= 130) {
         px[i] = 0;
         px[i + 1] = 0;
         px[i + 2] = 0;
-      } else {
+      } else if (avg >= 235) {
         px[i] = 255;
         px[i + 1] = 255;
         px[i + 2] = 255;
+      } else {
+        // 부드러운 S-커브 대비 (획 단절 및 꼬리 손실 방지)
+        const norm = (avg - 130) / 105;
+        const val = Math.round(norm * norm * 255);
+        px[i] = val;
+        px[i + 1] = val;
+        px[i + 2] = val;
       }
       px[i + 3] = 255;
     }
