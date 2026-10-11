@@ -10,6 +10,9 @@
   - 손글씨 업로드 기능
   - 카메라 사진 촬영 및 인식영역 설정 기능
   - **Google Handwriting Stroke API** 적용하여 인식률 획기적으로 개선
+
+<img width="100%" alt="Screenshot e8c0a21ef0e0f5101a0d9e590435203ca7bf96af 2026-10-11 16-56-40" src="https://github.com/user-attachments/assets/b9113761-bece-41b7-a2b0-4f18c832a838" />
+
  
 # 저장소 관리자
 * 이름: 김주완
